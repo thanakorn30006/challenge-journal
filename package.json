@@ -1,0 +1,9 @@
+{
+  "name": "challenge-journal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FTMO challenge trading journal with calendar, risk calculator, Supabase sync and AI coach",
+  "type": "module",
+  "scripts": { "start": "node server.mjs" },
+  "engines": { "node": ">=20" }
+}

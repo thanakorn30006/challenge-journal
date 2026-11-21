@@ -1,0 +1,1307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Challenge Journal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root { color-scheme: dark; --bg:#000; --fg:#f4f4f5; --muted:#8b8b93; --line:#1f1f23; }
+  html, body { margin:0; background:var(--bg); color:var(--fg); font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
+  #boot { padding:48px 24px; color:var(--muted); }
+  ::selection { background:#fff; color:#000; }
+  ::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background:var(--sb,#26262b); border-radius:6px; } ::-webkit-scrollbar-track { background:transparent; }
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">Loading journal…</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mui/material@5.15.14/umd/material-ui.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.0/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, useRef, useCallback } = React;
+const MUI = MaterialUI;
+const {
+  ThemeProvider, createTheme, CssBaseline, Box, IconButton, Dialog, DialogTitle, DialogContent,
+  DialogActions, ToggleButton, ToggleButtonGroup, Table, TableHead, TableBody, TableRow, LinearProgress, Stack, Divider, Tooltip, Switch, Checkbox, MenuItem, Drawer, Snackbar,
+  InputAdornment, useMediaQuery
+} = MUI;
+
+/* ============ constants & helpers ============ */
+const KEY = "ftmo-journal-v2";
+const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace';
+const PALETTES = {
+  dark: { UP: "#4ade80", DOWN: "#f87171", WARN: "#fbbf24", INFO: "#8ab4ff", MUTED: "#8b8b93", LINE: "#1f1f23", LINE2: "#26262b", LINE3: "#6b6b75", PANEL: "#09090b", RAISED: "#111114", ACC: "#f4f4f5", ACCH: "#ffffff", ACCFG: "#000000", TRACK: "#18181b", TRACK2: "#27272a", DISABLED: "#55555c", DIM: "#3a3a40", HOVER: "#101013", SIDE: "#050506", SUBTLE: "#a1a1aa", DANGERLINE: "#5a2a2a", NAVACT: "#151518", SUNK: "#0c0c0f", EMPTY: "#060608", HDR: "rgba(0,0,0,.82)", BG: "#000000" },
+  light: { UP: "#15803d", DOWN: "#dc2626", WARN: "#b45309", INFO: "#1d4ed8", MUTED: "#6b6b76", LINE: "#e4e4e7", LINE2: "#d4d4d8", LINE3: "#a1a1aa", PANEL: "#ffffff", RAISED: "#f4f4f5", ACC: "#18181b", ACCH: "#000000", ACCFG: "#ffffff", TRACK: "#e4e4e7", TRACK2: "#d4d4d8", DISABLED: "#a1a1aa", DIM: "#c4c4cc", HOVER: "#f4f4f5", SIDE: "#fafafa", SUBTLE: "#52525b", DANGERLINE: "#fca5a5", NAVACT: "#ececef", SUNK: "#fafafa", EMPTY: "#fafafa", HDR: "rgba(246,246,247,.88)", BG: "#f6f6f7" },
+};
+let UP, DOWN, WARN, INFO, MUTED, LINE, LINE2, LINE3, PANEL, RAISED, ACC, ACCH, ACCFG, TRACK, TRACK2, DISABLED, DIM, HOVER, SIDE, SUBTLE, DANGERLINE, NAVACT, SUNK, EMPTY, HDR, BG;
+function applyPalette(mode) { ({ UP, DOWN, WARN, INFO, MUTED, LINE, LINE2, LINE3, PANEL, RAISED, ACC, ACCH, ACCFG, TRACK, TRACK2, DISABLED, DIM, HOVER, SIDE, SUBTLE, DANGERLINE, NAVACT, SUNK, EMPTY, HDR, BG } = PALETTES[mode === "light" ? "light" : "dark"]); }
+applyPalette("dark");
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const TAGS = ["A+ setup", "Setup", "News", "Revenge", "FOMO", "No setup", "Wide SL", "Overtrading", "Moved SL"];
+const GOOD_TAGS = ["A+ setup", "Setup"];
+const CHECKLIST = [
+  "In my trading session and no high-impact news within 30 minutes",
+  "This is a setup written in my plan",
+  "Stop-loss is set and lot size is calculated from my risk %",
+  "Reward-to-risk is at least 1 : 1.5",
+  "Spread is normal and I am not chasing price",
+  "I am under today's loss cap, trade count and daily target",
+];
+const defaultSettings = { phase: 10, initial: 10000, dlPct: 5, mlPct: 10, ownPct: 2, minDays: 4, riskPct: 0.3, maxTrades: 8, dailyTargetPct: 1, stopAfterLosses: 3, contract: 100 };
+
+const pad = (n) => String(n).padStart(2, "0");
+const ymd = (d) => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+const r2 = (x) => Math.round(x * 100) / 100;
+const usd = (x, signed) => (x < 0 ? "-" : signed && x > 0 ? "+" : "") + "$" + Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const compact = (x) => { const a = Math.abs(x), s = x < 0 ? "-" : x > 0 ? "+" : ""; return s + (a >= 1000 ? (a / 1000).toFixed(1) + "k" : a.toFixed(0)); };
+const tone = (x) => (x > 0 ? UP : x < 0 ? DOWN : MUTED);
+const wdIndex = (d) => (d.getDay() + 6) % 7;
+const prettyDate = (s) => { const d = new Date(s + "T00:00:00"); return dayArr()[wdIndex(d)] + ", " + d.getDate() + " " + monthArr(true)[d.getMonth()] + " " + yearOf(d.getFullYear()); };
+
+const makeTheme = (mode) => createTheme({
+  palette: { mode, background: { default: BG, paper: PANEL }, primary: { main: ACC }, text: { primary: ACC, secondary: MUTED }, divider: LINE },
+  shape: { borderRadius: 8 },
+  typography: { fontFamily: '"Inter","IBM Plex Sans Thai","Noto Sans Thai",system-ui,sans-serif', button: { textTransform: "none", fontWeight: 500, letterSpacing: 0 } },
+  components: {
+    MuiPaper: { styleOverrides: { root: { backgroundImage: "none" } } },
+    MuiTableCell: { styleOverrides: { root: { borderColor: LINE, padding: "10px 14px", whiteSpace: "nowrap" } } },
+    MuiOutlinedInput: { styleOverrides: { root: { backgroundColor: SUNK }, notchedOutline: { borderColor: LINE2 } } },
+    MuiButton: { defaultProps: { disableElevation: true } },
+    MuiTooltip: { defaultProps: { arrow: true } },
+  },
+});
+
+/* ============ language (EN / TH) ============ */
+let LANG = "en";
+const DAYS_TH = ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."];
+const MONTHS_TH = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+const MONTHS_TH_SHORT = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+const dayArr = () => (LANG === "th" ? DAYS_TH : DAYS);
+const monthArr = (short) => (LANG === "th" ? (short ? MONTHS_TH_SHORT : MONTHS_TH) : (short ? MONTHS.map((m) => m.slice(0, 3)) : MONTHS));
+const yearOf = (y) => (LANG === "th" ? y + 543 : y);
+
+const TH = {
+  // navigation and shell
+  "Dashboard": "ภาพรวม", "Calendar": "ปฏิทิน", "Trades": "รายการไม้", "Analytics": "วิเคราะห์", "Risk calculator": "คำนวณความเสี่ยง", "AI coach": "AI โค้ช", "Settings": "ตั้งค่า",
+  "Account": "บัญชี", "Collapse": "ย่อเมนู", "All clear": "ปลอดภัย", "Caution": "ระวัง", "Stop trading": "หยุดเทรด", "Add trade": "เพิ่มไม้",
+  "You are viewing sample data, not your trades. Clear it before you start logging.": "คุณกำลังดูข้อมูลตัวอย่าง ไม่ใช่ไม้ของคุณ ล้างก่อนเริ่มจดจริง",
+  "Clear sample data": "ล้างข้อมูลตัวอย่าง",
+  "General journaling and risk tool. Not investment advice, and it does not guarantee you will pass.": "เครื่องมือจดบันทึกและบริหารความเสี่ยงทั่วไป ไม่ใช่คำแนะนำการลงทุน และไม่การันตีว่าจะผ่านสอบ",
+  // alerts
+  "Max Loss limit reached. The challenge is breached.": "ถึงเพดาน Max Loss แล้ว บัญชีสอบหลุดเกณฑ์",
+  "FTMO Daily Loss limit reached. Close everything and stop.": "ถึงเพดาน Daily Loss ของ FTMO แล้ว ปิดทุกออเดอร์และหยุดเทรด",
+  "You hit your own daily loss cap. Stop trading for today.": "ถึงเพดานขาดทุนรายวันของคุณแล้ว หยุดเทรดวันนี้",
+  "All clear. You are inside every limit.": "ทุกอย่างปกติ คุณอยู่ในเพดานทุกข้อ",
+  // dashboard
+  "Today's status": "สถานะวันนี้", "Balance": "ยอดบัญชี", "Net profit": "กำไรสุทธิ", "Today": "วันนี้", "Trading days": "วันเทรด", "Minimum reached": "ครบขั้นต่ำแล้ว",
+  "Limits": "เพดานความเสี่ยง", "Open P/L now": "P/L ที่ยังเปิดอยู่", "Target reached": "ถึงเป้าแล้ว", "My daily cap": "เพดานของฉันต่อวัน",
+  "Cap reached. Stop for today.": "ถึงเพดานแล้ว หยุดเทรดวันนี้", "FTMO daily loss": "Daily Loss ของ FTMO", "FTMO max loss": "Max Loss ของ FTMO",
+  "Equity curve": "กราฟ equity", "Recent trades": "ไม้ล่าสุด", "All trades": "ไม้ทั้งหมด", "lots": "ล็อต",
+  "No trades yet. Use \"Add trade\" to log your first one.": "ยังไม่มีไม้ กด \"เพิ่มไม้\" เพื่อจดไม้แรก",
+  // calendar
+  "Month P/L": "กำไรเดือนนี้", "Trade count": "จำนวนไม้", "Win rate": "อัตราชนะ", "Green / red days": "วันเขียว / แดง", "Week": "สัปดาห์",
+  // trades page
+  "Search notes": "ค้นหาบันทึก", "Month": "เดือน", "Side": "ฝั่ง", "Result": "ผล", "Tag": "แท็ก", "On plan": "ตามแผน", "All": "ทั้งหมด", "Buy": "ซื้อ", "Sell": "ขาย",
+  "Wins": "ชนะ", "Losses": "แพ้", "Yes": "ใช่", "No": "ไม่", "Date": "วันที่", "Time": "เวลา", "Lots": "ล็อต", "Entry": "ราคาเข้า", "Exit": "ราคาออก", "P/L": "กำไร/ขาดทุน", "Note": "บันทึก",
+  "Untagged": "ไม่มีแท็ก", "No trades match these filters.": "ไม่มีไม้ตรงกับตัวกรอง",
+  "A+ setup": "เซ็ตอัพ A+", "Setup": "เซ็ตอัพ", "News": "ข่าว", "Revenge": "เอาคืน", "FOMO": "FOMO", "No setup": "ไม่มีเซ็ตอัพ", "Wide SL": "SL กว้างเกิน", "Overtrading": "เทรดเกิน", "Moved SL": "ขยับ SL",
+  // trade dialog
+  "No trades yet": "ยังไม่มีไม้", "Stop loss": "จุดตัดขาดทุน (SL)", "Edit": "แก้ไข", "Delete": "ลบ", "Edit trade": "แก้ไขไม้", "Profit / loss ($)": "กำไร/ขาดทุน ($)",
+  "Auto-filled from prices. Edit to include commission.": "คำนวณจากราคาให้อัตโนมัติ แก้ได้หากต้องรวมค่าคอมมิชชัน",
+  "Tag / cause": "แท็ก / สาเหตุ", "I followed my plan on this trade": "ไม้นี้ฉันทำตามแผน",
+  "Notes: why I entered, how I felt, lesson": "บันทึก: เหตุผลที่เข้า ความรู้สึก บทเรียน",
+  "Add entry and stop loss to see risk and R multiple.": "ใส่ราคาเข้าและ SL เพื่อดูความเสี่ยงและค่า R",
+  "Save changes": "บันทึกการแก้ไข", "Cancel edit": "ยกเลิกการแก้ไข", "Daily journal": "บันทึกประจำวัน",
+  "How did the day go? Did you follow the rules? What changes tomorrow?": "วันนี้เป็นอย่างไร ทำตามกฎหรือไม่ พรุ่งนี้จะเปลี่ยนอะไร",
+  "Close": "ปิด", "Trade updated": "อัปเดตไม้แล้ว", "Trade added": "เพิ่มไม้แล้ว", "Trade deleted": "ลบไม้แล้ว",
+  // analytics
+  "Equity curve (daily)": "กราฟ equity (รายวัน)", "Performance": "ผลงาน", "Average win / loss": "กำไรเฉลี่ย / ขาดทุนเฉลี่ย", "Expectancy per trade": "Expectancy ต่อไม้",
+  "Average R": "R เฉลี่ย", "Max drawdown": "Drawdown สูงสุด", "Longest losing streak": "แพ้ติดกันนานสุด", "Best day": "วันที่ดีที่สุด", "Worst day": "วันที่แย่ที่สุด",
+  "Discipline": "วินัย", "Followed plan": "ทำตามแผน", "Net P/L on plan": "กำไรสุทธิไม้ตามแผน", "Net P/L off plan": "กำไรสุทธิไม้นอกแผน",
+  "P/L by weekday": "กำไรตามวันในสัปดาห์", "P/L by tag (find your leaks)": "กำไรตามแท็ก (หาจุดรั่ว)", "P/L by hour (your logged time)": "กำไรตามชั่วโมง (เวลาที่คุณบันทึก)",
+  "No data yet": "ยังไม่มีข้อมูล", "Start": "เริ่ม", "Target": "เป้า",
+  // calculator
+  "Trade setup (XAUUSD)": "ตั้งค่าไม้ (XAUUSD)", "Entry price": "ราคาเข้า", "Stop loss price": "ราคา SL", "Risk per trade (%)": "ความเสี่ยงต่อไม้ (%)", "Target R : R": "R : R เป้าหมาย",
+  "Spread ($ per oz)": "Spread ($ ต่อ oz)", "Pre-trade checklist": "เช็กลิสต์ก่อนเข้าไม้", "Reset": "รีเซ็ต",
+  "In my trading session and no high-impact news within 30 minutes": "อยู่ในช่วงเวลาเทรดของฉัน และไม่มีข่าวแรงภายใน 30 นาที",
+  "This is a setup written in my plan": "เป็นเซ็ตอัพที่เขียนไว้ในแผนของฉัน",
+  "Stop-loss is set and lot size is calculated from my risk %": "ตั้ง SL แล้ว และคำนวณล็อตจาก % ความเสี่ยงของฉัน",
+  "Reward-to-risk is at least 1 : 1.5": "R:R อย่างน้อย 1 : 1.5",
+  "Spread is normal and I am not chasing price": "spread ปกติ และฉันไม่ได้ไล่ราคา",
+  "I am under today's loss cap, trade count and daily target": "ฉันยังอยู่ในเพดานขาดทุน จำนวนไม้ และเป้ารายวันของวันนี้",
+  "Position size": "ขนาดสัญญา", "Stop distance": "ระยะ SL", "Real risk (incl. spread)": "ความเสี่ยงจริง (รวม spread)", "Target risk": "ความเสี่ยงตามเป้า",
+  "Take-profit price": "ราคา TP", "Profit at take-profit": "กำไรเมื่อถึง TP", "Daily cap left": "เพดานรายวันที่เหลือ", "Checks": "ข้อควรตรวจ",
+  "Log this trade in journal": "บันทึกไม้นี้ลงสมุด", "Complete the checklist to log": "ติ๊กเช็กลิสต์ให้ครบก่อนบันทึก",
+  "Lot size is below 0.01 at this risk. The stop is too wide. Tighten it or skip.": "ที่ความเสี่ยงนี้ล็อตต่ำกว่า 0.01 SL กว้างเกินไป ให้ขยับ SL เข้ามาหรือข้ามไม้นี้",
+  "A full stop-out would breach FTMO daily loss. Do not take this trade.": "ถ้าโดน SL เต็มจะทะลุ Daily Loss ของ FTMO ห้ามเข้าไม้นี้",
+  "A full stop-out would breach FTMO max loss. Do not take this trade.": "ถ้าโดน SL เต็มจะทะลุ Max Loss ของ FTMO ห้ามเข้าไม้นี้",
+  "Risk above 1% per trade is aggressive for a challenge account.": "ความเสี่ยงเกิน 1% ต่อไม้ถือว่าก้าวร้าวสำหรับบัญชีสอบ",
+  "Reward-to-risk below 1 needs a very high win rate.": "R:R ต่ำกว่า 1 ต้องมีอัตราชนะสูงมาก",
+  "Spread is over 15% of your stop distance. Consider skipping.": "spread เกิน 15% ของระยะ SL ควรพิจารณาข้ามไม้นี้",
+  // coach
+  "Risk and discipline coach": "โค้ชความเสี่ยงและวินัย",
+  "Ask about your journal, limits and habits. The coach reads your numbers and suggests rules. It does not give trade signals or investment advice.": "ถามเรื่องสมุดเทรด เพดานความเสี่ยง และนิสัยการเทรดได้ โค้ชจะอ่านตัวเลขของคุณและเสนอกฎ ไม่ให้สัญญาณซื้อขายหรือคำแนะนำการลงทุน",
+  "Thinking…": "กำลังคิด…", "Ask about your trades, limits or habits…": "ถามเรื่องไม้ เพดาน หรือนิสัยการเทรด…",
+  "Enter to send, Shift+Enter for a new line. AI can make mistakes. Verify important numbers.": "Enter เพื่อส่ง Shift+Enter เพื่อขึ้นบรรทัดใหม่ AI อาจผิดพลาดได้ ตรวจตัวเลขสำคัญซ้ำ",
+  "Connection": "การเชื่อมต่อ", "Connected": "เชื่อมต่อแล้ว", "API key missing in .env": "ไม่พบ API key ใน .env", "Checking…": "กำลังตรวจสอบ…", "Context": "บริบท",
+  "Share my journal summary": "ส่งสรุปสมุดเทรดของฉัน",
+  "Sends stats, limits and your last 20 trades (with notes) to your model endpoint through the local server. Turn off for general questions.": "ส่งสถิติ เพดาน และ 20 ไม้ล่าสุด (พร้อมบันทึก) ไปยังโมเดลผ่านเซิร์ฟเวอร์ในเครื่อง ปิดไว้ถ้าถามเรื่องทั่วไป",
+  "Quick questions": "คำถามด่วน", "Clear conversation": "ล้างบทสนทนา",
+  "Review my week": "สรุปสัปดาห์ของฉัน", "Why am I losing?": "ทำไมฉันขาดทุน?", "Can I take another trade?": "ควรเทรดต่อไหม?", "Plan tomorrow": "วางแผนพรุ่งนี้", "Am I on track?": "ฉันมาถูกทางไหม?",
+  "Review my last 5 trading days. What am I doing well, and what is my biggest leak?": "สรุป 5 วันเทรดล่าสุดของฉัน อะไรที่ทำได้ดี และจุดรั่วใหญ่สุดคืออะไร",
+  "Using my tags and on-plan data, explain where my money is leaking and what rule would stop it.": "จากแท็กและข้อมูลการทำตามแผนของฉัน บอกว่าเงินรั่วตรงไหน และควรใช้กฎอะไรอุดรอยรั่ว",
+  "Given today's status and limits, should I keep trading today? Be strict.": "จากสถานะและเพดานของวันนี้ ฉันควรเทรดต่อหรือไม่ ขอแบบเข้มงวด",
+  "Write a short pre-market risk plan for tomorrow based on my data: risk per trade, daily cap, stop rules.": "เขียนแผนความเสี่ยงก่อนตลาดเปิดสำหรับพรุ่งนี้แบบสั้นๆ จากข้อมูลของฉัน: ความเสี่ยงต่อไม้ เพดานรายวัน กฎหยุดเทรด",
+  "Am I on track to pass this phase? Use my profit, drawdown, trading days and discipline numbers.": "ฉันมีโอกาสผ่านขั้นนี้ไหม ใช้ตัวเลขกำไร drawdown วันเทรด และวินัยของฉัน",
+  // settings
+  "Account and rules": "บัญชีและกฎ", "Phase": "ขั้นสอบ", "Start balance ($)": "เงินเริ่มต้น ($)", "Minimum trading days": "วันเทรดขั้นต่ำ",
+  "FTMO daily loss (%)": "Daily Loss ของ FTMO (%)", "FTMO max loss (%)": "Max Loss ของ FTMO (%)", "Contract size (oz per lot)": "ขนาดสัญญา (oz ต่อล็อต)",
+  "Verify the FTMO numbers on their site before relying on them. Daily loss here counts closed trades plus the open P/L you enter on the dashboard.": "ตรวจตัวเลขของ FTMO กับเว็บ FTMO ก่อนใช้งานจริง Daily Loss ในหน้านี้นับไม้ที่ปิดแล้วรวมกับ P/L ที่ยังเปิดซึ่งคุณกรอกในหน้าภาพรวม",
+  "My discipline rules": "กฎวินัยของฉัน", "My daily loss cap (%)": "เพดานขาดทุนรายวันของฉัน (%)", "Daily profit target (%)": "เป้ากำไรรายวัน (%)",
+  "Max trades per day": "จำนวนไม้สูงสุดต่อวัน", "Stop after N losses in a row": "หยุดเมื่อแพ้ติดกัน N ไม้",
+  "AI model": "โมเดล AI", "Status": "สถานะ", "Configured": "ตั้งค่าแล้ว", "Missing API key": "ไม่มี API key", "Model": "โมเดล",
+  "The API key lives in the local .env file and is used by the local server only. It is never sent to this page.": "API key อยู่ในไฟล์ .env บนเครื่องและใช้โดยเซิร์ฟเวอร์ในเครื่องเท่านั้น ไม่ถูกส่งมาที่หน้านี้",
+  "Test connection": "ทดสอบการเชื่อมต่อ", "Testing…": "กำลังทดสอบ…", "Data": "ข้อมูล",
+  "Export (copy JSON)": "ส่งออก (คัดลอก JSON)", "Import from box": "นำเข้าจากช่อง", "Load sample data": "โหลดข้อมูลตัวอย่าง", "Clear all trades": "ล้างไม้ทั้งหมด", "Backup JSON": "ข้อมูลสำรอง JSON",
+  "Copied to clipboard": "คัดลอกแล้ว", "Select the text and copy it manually": "เลือกข้อความแล้วคัดลอกเอง", "That JSON is not a valid backup": "JSON นี้ไม่ใช่ไฟล์สำรองที่ถูกต้อง",
+  "All trades cleared": "ล้างไม้ทั้งหมดแล้ว", "Sample data loaded": "โหลดข้อมูลตัวอย่างแล้ว",
+  "Cancel": "ยกเลิก", "Delete this trade?": "ลบไม้นี้หรือไม่?", "Clear all trades?": "ล้างไม้ทั้งหมดหรือไม่?", "Clear sample data?": "ล้างข้อมูลตัวอย่างหรือไม่?",
+  "Replace your trades with sample data?": "แทนที่ไม้ของคุณด้วยข้อมูลตัวอย่างหรือไม่?", "Replace your journal with this backup?": "แทนที่สมุดเทรดด้วยข้อมูลสำรองนี้หรือไม่?", "Clear the AI conversation?": "ล้างบทสนทนา AI หรือไม่?",
+  "Clear": "ล้าง", "Replace": "แทนที่", "This cannot be undone. If cloud sync is on, the deletion syncs to your cloud copy too.": "ย้อนกลับไม่ได้ ถ้าเปิดซิงก์คลาวด์ การลบจะซิงก์ไปที่สำเนาในคลาวด์ด้วย",
+  "This removes the example trades. Your own data is not affected.": "จะลบไม้ตัวอย่างออก ข้อมูลของคุณไม่ได้รับผลกระทบ",
+  "Your current trades and notes will be overwritten. Export a backup first if you are unsure.": "ไม้และบันทึกปัจจุบันของคุณจะถูกเขียนทับ ถ้าไม่แน่ใจให้ส่งออกสำรองก่อน",
+  "The messages in this chat will be removed from this browser.": "ข้อความในแชทนี้จะถูกลบออกจากเบราว์เซอร์นี้",
+  "Sign in under Settings → Cloud sync to use the AI coach.": "ล็อกอินที่ ตั้งค่า → ซิงก์คลาวด์ เพื่อใช้ AI โค้ช",
+  "Cloud sync": "ซิงก์คลาวด์", "Signed out": "ยังไม่ได้ล็อกอิน", "Syncing…": "กำลังซิงก์…", "Synced": "ซิงก์แล้ว", "Sync error": "ซิงก์ผิดพลาด", "Sync paused": "หยุดซิงก์ชั่วคราว",
+  "Sign in with your email to keep your journal on every device. Your data is private to your account.": "ล็อกอินด้วยอีเมลเพื่อเก็บสมุดเทรดไว้ใช้ได้ทุกอุปกรณ์ ข้อมูลเป็นส่วนตัวของบัญชีคุณเท่านั้น",
+  "Email": "อีเมล", "Send sign-in link": "ส่งลิงก์เข้าสู่ระบบ", "Sync now": "ซิงก์ตอนนี้", "Sign out": "ออกจากระบบ", "Sign in": "เข้าสู่ระบบ",
+  "Check your inbox and open the link on this device.": "เช็กอีเมลแล้วเปิดลิงก์บนอุปกรณ์นี้",
+  "Sample data is not uploaded. Clear it or add your first trade to start syncing.": "ข้อมูลตัวอย่างจะไม่ถูกอัปโหลด ล้างตัวอย่างหรือเพิ่มไม้แรกเพื่อเริ่มซิงก์",
+  "Cloud and this device are different": "ข้อมูลในคลาวด์กับในเครื่องนี้ไม่ตรงกัน",
+  "Your cloud journal and this device both have data. Pick which one to keep. The other one is overwritten.": "ทั้งคลาวด์และเครื่องนี้มีข้อมูลอยู่ เลือกว่าจะเก็บอันไหน อีกอันจะถูกเขียนทับ",
+  "Keep cloud data": "ใช้ข้อมูลในคลาวด์", "Keep this device's data": "ใช้ข้อมูลในเครื่องนี้", "Cloud sync is unavailable (library failed to load).": "ซิงก์คลาวด์ใช้ไม่ได้ (โหลดไลบรารีไม่สำเร็จ)",
+  "Synced from cloud": "ดึงข้อมูลจากคลาวด์แล้ว", "Signed out of cloud sync": "ออกจากระบบซิงก์แล้ว",
+  "The model returned an empty answer. Try again or shorten your question.": "โมเดลตอบกลับว่างเปล่า ลองใหม่หรือย่อคำถามให้สั้นลง",
+};
+const THR = [
+  [/^Signed in as (.+)$/, (a) => "ล็อกอินเป็น " + a],
+  [/^Sign-in link sent to (.+)\. Open it on this device\.$/, (a) => "ส่งลิงก์เข้าสู่ระบบไปที่ " + a + " แล้ว เปิดลิงก์บนอุปกรณ์นี้"],
+  [/^Cloud has (\d+) trades, this device has (\d+)\.$/, (a, b) => "คลาวด์มี " + a + " ไม้ เครื่องนี้มี " + b + " ไม้"],
+  [/^(\d+)% of (\d+)% target$/, (a, b) => a + "% ของเป้า " + b + "%"],
+  [/^You have used (\d+)% of today's loss cap\. Halve your size or stop\.$/, (a) => "ใช้เพดานขาดทุนวันนี้ไปแล้ว " + a + "% ลดขนาดล็อตลงครึ่งหนึ่งหรือหยุดเทรด"],
+  [/^(\d+) losses in a row\. Take a 30 minute break or end the day\.$/, (a) => "แพ้ติดกัน " + a + " ไม้ พักอย่างน้อย 30 นาทีหรือเลิกเทรดวันนี้"],
+  [/^You reached (\d+) trades today \(limit (\d+)\)\. Overtrading risk\.$/, (a, b) => "วันนี้เทรดแล้ว " + a + " ไม้ (จำกัด " + b + ") เสี่ยงเทรดมากเกินไป"],
+  [/^Daily target reached \((.+)\)\. Protect it and consider stopping\.$/, (a) => "ถึงเป้ารายวันแล้ว (" + a + ") รักษากำไรไว้และพิจารณาหยุดเทรด"],
+  [/^(\d+) trades? today were outside your plan\.$/, (a) => "วันนี้มี " + a + " ไม้ที่ทำนอกแผน"],
+  [/^Only (.+) left before Max Loss\. Reduce risk per trade\.$/, (a) => "เหลืออีกเพียง " + a + " ก่อนถึง Max Loss ลดความเสี่ยงต่อไม้"],
+  [/^Target reached, but you need (\d+) more trading day\(s\)\.$/, (a) => "ถึงเป้าแล้ว แต่ต้องเทรดอีก " + a + " วันจึงครบขั้นต่ำ"],
+  [/^Started at (.+)$/, (a) => "เริ่มที่ " + a],
+  [/^(.+) of account$/, (a) => a + " ของบัญชี"],
+  [/^(.+) · (\d+) trades?$/, (a, b) => a + " · " + b + " ไม้"],
+  [/^(\d+) trades?( · incl\. open P\/L)?$/, (a, b) => a + " ไม้" + (b ? " · รวม P/L ที่ยังเปิด" : "")],
+  [/^(\d+) more to go$/, (a) => "อีก " + a + " วัน"],
+  [/^Profit target (\d+)%$/, (a) => "เป้ากำไร " + a + "%"],
+  [/^(.+) to go$/, (a) => "เหลืออีก " + a],
+  [/^(.+) left$/, (a) => "เหลือ " + a],
+  [/^Limit (.+) \((.+)\)$/, (a, b) => "จำกัด " + a + " (" + b + ")"],
+  [/^Equity floor (.+)$/, (a) => "เส้น equity ต่ำสุด " + a],
+  [/^(\d+) trades · (\d+)%$/, (a, b) => a + " ไม้ · " + b + "%"],
+  [/^(\d+) trades · (\d+)d$/, (a, b) => a + " ไม้ · " + b + " วัน"],
+  [/^Win rate (\d+)%$/, (a) => "อัตราชนะ " + a + "%"],
+  [/^Click a day to view or add trades\. A red outline with ! means the day hit your own loss cap \((.+)\)\. ✎ marks a day with a journal note\.$/, (a) => "กดวันที่เพื่อดู เพิ่ม หรือแก้ไม้ กรอบแดงและ ! คือวันที่ขาดทุนถึงเพดานของคุณ (" + a + ") ✎ คือมีบันทึกประจำวัน"],
+  [/^Risk on this trade: (.+) \((.+)% of start balance(?:, above your plan of (.+)%)?\)$/, (a, b, c) => "ความเสี่ยงของไม้นี้: " + a + " (" + b + "% ของเงินเริ่มต้น" + (c ? " เกินแผนที่ตั้งไว้ " + c + "%" : "") + ")"],
+  [/^A full stop-out would breach your daily cap \((.+) left\)\. Reduce size or stop for today\.$/, (a) => "ถ้าโดน SL เต็มจะทะลุเพดานรายวันของคุณ (เหลือ " + a + ") ลดล็อตหรือหยุดเทรดวันนี้"],
+  [/^You can lose about (\d+) full stops before your daily cap\.$/, (a) => "คุณโดน SL เต็มได้อีกประมาณ " + a + " ไม้ก่อนถึงเพดานรายวัน"],
+  [/^(.+) \+ (.+) spread$/, (a, b) => a + " + spread " + b],
+  [/^Assumes 1 lot = (\d+) oz\. Check your broker's contract size\.$/, (a) => "สมมติ 1 ล็อต = " + a + " oz ตรวจขนาดสัญญากับโบรกเกอร์ของคุณ"],
+  [/^Model replied: (.*)$/, (a) => "โมเดลตอบกลับ: " + a],
+  [/^Failed: (.*)$/, (a) => "ไม่สำเร็จ: " + a],
+  [/^Imported (\d+) trades$/, (a) => "นำเข้า " + a + " ไม้แล้ว"],
+  [/^Journal data is stored in this browser only\. Export a backup now and then\.( You are currently looking at sample data, not your trades\.)?$/, (a) => "ข้อมูลสมุดเทรดเก็บในเบราว์เซอร์นี้เท่านั้น ควรส่งออกสำรองเป็นระยะ" + (a ? " ตอนนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ไม้ของคุณ" : "")],
+];
+function tx(s) {
+  if (LANG === "en" || typeof s !== "string" || !s) return s;
+  if (TH[s] != null) return TH[s];
+  for (let i = 0; i < THR.length; i++) { const m = s.match(THR[i][0]); if (m) return THR[i][1].apply(null, m.slice(1)); }
+  return s;
+}
+const txc = (c) => (Array.isArray(c) ? c.map((x) => (typeof x === "string" ? tx(x) : x)) : (typeof c === "string" ? tx(c) : c));
+/* Components that translate their text automatically. Shadow the MUI originals. */
+const Typography = (p) => <MUI.Typography {...p}>{txc(p.children)}</MUI.Typography>;
+const Button = React.forwardRef((p, ref) => <MUI.Button ref={ref} {...p}>{txc(p.children)}</MUI.Button>);
+const Chip = (p) => <MUI.Chip {...p} label={txc(p.label)} />;
+const TextField = (p) => <MUI.TextField {...p} label={txc(p.label)} helperText={txc(p.helperText)} placeholder={txc(p.placeholder)} />;
+const TableCell = (p) => <MUI.TableCell {...p}>{txc(p.children)}</MUI.TableCell>;
+const FormControlLabel = (p) => <MUI.FormControlLabel {...p} label={txc(p.label)} />;
+
+/* ============ data ============ */
+function seedData() {
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  let s = 7; const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  const trades = []; let id = 1;
+  for (let d = 1; d < now.getDate(); d++) {
+    const wd = new Date(y, m, d).getDay(); if (wd === 0 || wd === 6) continue;
+    const n = 2 + Math.floor(rnd() * 4);
+    for (let i = 0; i < n; i++) {
+      const win = rnd() < 0.44, dir = rnd() < 0.5 ? 1 : -1, lots = 0.1, slDist = 3;
+      const entry = r2(4000 + Math.round(rnd() * 400) / 10);
+      const mv = win ? slDist * (1.2 + rnd() * 1.0) : -slDist * (0.9 + rnd() * 0.1);
+      const exit = r2(entry + dir * mv);
+      const followed = rnd() < 0.85;
+      trades.push({
+        id: id++, date: y + "-" + pad(m + 1) + "-" + pad(d), time: pad(14 + Math.floor(rnd() * 6)) + ":" + pad(Math.floor(rnd() * 60)),
+        dir, lots, entry, sl: r2(entry - dir * slDist), exit, pnl: r2((exit - entry) * dir * lots * 100), followed,
+        tag: win ? (followed ? "Setup" : "FOMO") : (followed ? (rnd() < 0.5 ? "Setup" : "News") : (rnd() < 0.5 ? "Revenge" : "No setup")), note: "",
+      });
+    }
+  }
+  return { settings: defaultSettings, trades, notes: {}, floating: 0, sample: true, chat: [] };
+}
+function loadState() {
+  try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); if (s && s.trades) return Object.assign({ notes: {}, floating: 0, chat: [] }, s); } catch (e) {}
+  return seedData();
+}
+const riskOf = (t, cs) => (t.sl != null && t.entry != null && t.lots) ? Math.abs(t.entry - t.sl) * t.lots * (cs || 100) : 0;
+const rOf = (t, cs) => { const r = riskOf(t, cs); return r > 0 ? t.pnl / r : null; };
+
+function computeStats(trades, S) {
+  const sorted = [...trades].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time) || a.id - b.id);
+  const total = sorted.reduce((a, t) => a + t.pnl, 0);
+  const wins = sorted.filter((t) => t.pnl > 0), losses = sorted.filter((t) => t.pnl < 0);
+  const gw = wins.reduce((a, t) => a + t.pnl, 0), gl = Math.abs(losses.reduce((a, t) => a + t.pnl, 0));
+  const dm = {};
+  sorted.forEach((t) => { const o = (dm[t.date] = dm[t.date] || { pnl: 0, n: 0, w: 0, trades: [] }); o.pnl += t.pnl; o.n++; if (t.pnl > 0) o.w++; o.trades.push(t); });
+  const days = Object.keys(dm).sort();
+  let peak = S.initial, bal = S.initial, maxDD = 0, streak = 0, maxStreak = 0;
+  sorted.forEach((t) => { bal += t.pnl; peak = Math.max(peak, bal); maxDD = Math.max(maxDD, peak - bal); if (t.pnl < 0) { streak++; maxStreak = Math.max(maxStreak, streak); } else streak = 0; });
+  const rs = sorted.map((t) => rOf(t, S.contract)).filter((x) => x != null);
+  const byWd = [0, 0, 0, 0, 0], byWdN = [0, 0, 0, 0, 0];
+  days.forEach((d) => { const w = wdIndex(new Date(d + "T00:00:00")); if (w < 5) { byWd[w] += dm[d].pnl; byWdN[w] += dm[d].n; } });
+  const byHour = {}; sorted.forEach((t) => { const h = (t.time || "00:00").slice(0, 2); const o = (byHour[h] = byHour[h] || { pnl: 0, n: 0 }); o.pnl += t.pnl; o.n++; });
+  const byTag = {}; sorted.forEach((t) => { const k = t.tag || "Untagged"; const o = (byTag[k] = byTag[k] || { pnl: 0, n: 0, w: 0 }); o.pnl += t.pnl; o.n++; if (t.pnl > 0) o.w++; });
+  const fol = sorted.filter((t) => t.followed), unf = sorted.filter((t) => !t.followed);
+  const dv = days.map((d) => ({ d, pnl: dm[d].pnl }));
+  return {
+    sorted, total, n: sorted.length, wins: wins.length, losses: losses.length, winRate: sorted.length ? wins.length / sorted.length : 0,
+    avgWin: wins.length ? gw / wins.length : 0, avgLoss: losses.length ? gl / losses.length : 0, pf: gl > 0 ? gw / gl : gw > 0 ? Infinity : 0,
+    expectancy: sorted.length ? total / sorted.length : 0, avgR: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
+    days, dm, tradingDays: days.length, maxDD, maxStreak, byWd, byWdN, byHour, byTag,
+    folN: fol.length, folPnl: fol.reduce((a, t) => a + t.pnl, 0), unfN: unf.length, unfPnl: unf.reduce((a, t) => a + t.pnl, 0),
+    best: dv.length ? dv.reduce((a, b) => (b.pnl > a.pnl ? b : a)) : null, worst: dv.length ? dv.reduce((a, b) => (b.pnl < a.pnl ? b : a)) : null,
+  };
+}
+
+function todayInfo(stats, S, floating, todayStr) {
+  const B = S.initial, o = stats.dm[todayStr];
+  const tt = o ? o.trades.slice().sort((a, b) => a.time.localeCompare(b.time) || a.id - b.id) : [];
+  const pnl = o ? o.pnl : 0;
+  const dlLimit = B * S.dlPct / 100, ownLimit = B * S.ownPct / 100, mlLimit = B * S.mlPct / 100, goalDay = B * S.dailyTargetPct / 100;
+  const ownRoom = ownLimit + pnl + floating, dlRoom = dlLimit + pnl + floating, mlRoom = mlLimit + stats.total + floating;
+  let streak = 0; for (let i = tt.length - 1; i >= 0; i--) { if (tt[i].pnl < 0) streak++; else break; }
+  const off = tt.filter((t) => !t.followed).length;
+  const usedOwn = ownLimit > 0 ? (1 - ownRoom / ownLimit) : 1;
+  const alerts = [];
+  if (mlRoom <= 0) alerts.push({ level: "bad", text: "Max Loss limit reached. The challenge is breached." });
+  else if (dlRoom <= 0) alerts.push({ level: "bad", text: "FTMO Daily Loss limit reached. Close everything and stop." });
+  else if (ownRoom <= 0) alerts.push({ level: "bad", text: "You hit your own daily loss cap. Stop trading for today." });
+  else if (usedOwn >= 0.5) alerts.push({ level: "warn", text: "You have used " + Math.round(usedOwn * 100) + "% of today's loss cap. Halve your size or stop." });
+  if (streak >= S.stopAfterLosses) alerts.push({ level: "bad", text: streak + " losses in a row. Take a 30 minute break or end the day." });
+  if (tt.length >= S.maxTrades) alerts.push({ level: "warn", text: "You reached " + tt.length + " trades today (limit " + S.maxTrades + "). Overtrading risk." });
+  if (pnl + floating >= goalDay && goalDay > 0) alerts.push({ level: "good", text: "Daily target reached (" + usd(goalDay) + "). Protect it and consider stopping." });
+  if (off > 0) alerts.push({ level: "warn", text: off + " trade" + (off > 1 ? "s" : "") + " today were outside your plan." });
+  if (mlRoom > 0 && mlRoom / mlLimit < 0.35) alerts.push({ level: "warn", text: "Only " + usd(mlRoom) + " left before Max Loss. Reduce risk per trade." });
+  if (stats.total >= B * S.phase / 100 && stats.tradingDays < S.minDays) alerts.push({ level: "info", text: "Target reached, but you need " + (S.minDays - stats.tradingDays) + " more trading day(s)." });
+  if (!alerts.length) alerts.push({ level: "good", text: "All clear. You are inside every limit." });
+  const status = alerts.some((a) => a.level === "bad") ? "stop" : alerts.some((a) => a.level === "warn") ? "caution" : "clear";
+  return { pnl, floating, tt, streak, dlLimit, ownLimit, mlLimit, goalDay, ownRoom, dlRoom, mlRoom, alerts, status };
+}
+
+function buildContext(S, stats, info, notes) {
+  const last = stats.sorted.slice(-20).map((t) => ({ date: t.date, time: t.time, dir: t.dir > 0 ? "BUY" : "SELL", lots: t.lots, pnl: t.pnl, R: rOf(t, S.contract) == null ? null : +rOf(t, S.contract).toFixed(2), onPlan: t.followed, tag: t.tag || null, note: t.note || undefined }));
+  const days = stats.days.slice(-15).map((d) => ({ date: d, pnl: r2(stats.dm[d].pnl), trades: stats.dm[d].n }));
+  const tags = Object.keys(stats.byTag).map((k) => ({ tag: k, trades: stats.byTag[k].n, pnl: r2(stats.byTag[k].pnl) }));
+  return JSON.stringify({
+    account: { startBalance: S.initial, phase: S.phase === 10 ? "Challenge" : "Verification", targetPct: S.phase, ftmoDailyLossPct: S.dlPct, ftmoMaxLossPct: S.mlPct, ownDailyCapPct: S.ownPct, plannedRiskPerTradePct: S.riskPct, maxTradesPerDay: S.maxTrades, instrument: "XAUUSD scalping" },
+    now: { balance: r2(S.initial + stats.total), netPnl: r2(stats.total), todayPnl: r2(info.pnl), openPnl: info.floating, roomOwnCap: r2(info.ownRoom), roomDailyLoss: r2(info.dlRoom), roomMaxLoss: r2(info.mlRoom), tradesToday: info.tt.length, consecutiveLossesToday: info.streak, tradingDays: stats.tradingDays, minTradingDays: S.minDays, alerts: info.alerts.map((a) => a.text) },
+    stats: { trades: stats.n, winRatePct: +(stats.winRate * 100).toFixed(1), profitFactor: stats.pf === Infinity ? "inf" : +stats.pf.toFixed(2), expectancyPerTrade: r2(stats.expectancy), avgR: stats.avgR == null ? null : +stats.avgR.toFixed(2), maxDrawdown: r2(stats.maxDD), maxLosingStreak: stats.maxStreak, onPlanRatePct: stats.n ? Math.round(stats.folN / stats.n * 100) : null, pnlOnPlan: r2(stats.folPnl), pnlOffPlan: r2(stats.unfPnl) },
+    byTag: tags, recentDays: days, recentTrades: last,
+  });
+}
+const SYSTEM_PROMPT = "You are a trading risk and discipline coach for a prop-firm challenge trader (FTMO 2-Step, XAUUSD scalper). " +
+  "Your job: analyse the trader's journal data, find behavioural and risk-management leaks, and propose concrete rules. " +
+  "Rules for you: be educational only. Never give buy/sell signals, entry or exit prices, market predictions or personalised investment advice; if asked, decline in one sentence and redirect to risk and process. " +
+  "Use the provided JSON journal when it is present and cite specific numbers from it. Do not invent trades or figures. If data is thin, say so. " +
+  "Answer in English, concise, with short bullet points. End with 1 to 3 concrete action items. " +
+  "Keep any internal reasoning very brief (a few sentences at most) and always produce the final answer.";
+
+/* ============ small UI pieces ============ */
+const PATHS = {
+  dashboard: "M3 3h7v9H3z M14 3h7v5h-7z M14 12h7v9h-7z M3 16h7v5H3z", calendar: "M3 5h18v16H3z M3 10h18 M8 3v4 M16 3v4",
+  list: "M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01", chart: "M3 3v18h18 M7 15l4-5 3 3 5-7",
+  calc: "M5 3h14v18H5z M8 7h8 M8 12h.01 M12 12h.01 M16 12h.01 M8 16h.01 M12 16h.01 M16 16h.01",
+  spark: "M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z",
+  gear: "M4 7h9 M17 7h3 M4 17h3 M11 17h9 M15 4v6 M9 14v6",
+  menu: "M3 6h18 M3 12h18 M3 18h18", plus: "M12 5v14 M5 12h14", left: "M15 6l-6 6 6 6", right: "M9 6l6 6-6 6",
+  send: "M22 2L11 13 M22 2l-7 20-4-9-9-4z", stop: "M6 6h12v12H6z", trash: "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13", check: "M5 12l5 5 9-11",
+  cloud: "M7 18a4 4 0 010-8 5.5 5.5 0 0110.7 1.5A3.3 3.3 0 0117 18z",
+  sun: "M12 8a4 4 0 100 8 4 4 0 000-8z M12 2v2 M12 20v2 M2 12h2 M20 12h2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4",
+  moon: "M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z",
+  globe: "M12 3a9 9 0 100 18 9 9 0 000-18z M3 12h18 M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z",
+};
+const Icon = ({ name, size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={PATHS[name]} /></svg>
+);
+const Label = ({ children, sx }) => <Typography sx={Object.assign({ fontSize: 11, letterSpacing: ".09em", textTransform: "uppercase", color: "text.secondary", fontWeight: 600 }, sx)}>{children}</Typography>;
+const Panel = ({ children, sx, title, action }) => (
+  <Box sx={Object.assign({ border: "1px solid " + LINE, borderRadius: 2, bgcolor: PANEL, p: 2.25, minWidth: 0 }, sx)}>
+    {(title || action) && <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.75, gap: 1 }}><Label>{title}</Label>{action}</Stack>}
+    {children}
+  </Box>
+);
+const Metric = ({ label, value, sub, color }) => (
+  <Panel>
+    <Label>{label}</Label>
+    <Typography sx={{ fontFamily: MONO, fontSize: { xs: 20, sm: 26 }, fontWeight: 500, color: color || "text.primary", mt: 0.75, letterSpacing: "-.02em", overflowWrap: "anywhere" }}>{value}</Typography>
+    {sub != null && <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 0.25 }}>{sub}</Typography>}
+  </Panel>
+);
+const Gauge = ({ label, text, sub, color, pct }) => (
+  <Box sx={{ minWidth: 0 }}>
+    <Stack direction="row" justifyContent="space-between" sx={{ flexWrap: "wrap", gap: 0.5 }}>
+      <Typography sx={{ fontSize: 13, fontWeight: 500 }}>{label}</Typography>
+      <Typography sx={{ fontFamily: MONO, fontSize: 12.5 }}>{text}</Typography>
+    </Stack>
+    <LinearProgress variant="determinate" value={Math.min(100, Math.max(0, pct))} sx={{ height: 6, borderRadius: 3, bgcolor: TRACK, mt: 1, "& .MuiLinearProgress-bar": { bgcolor: color, borderRadius: 3 } }} />
+    <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 0.75 }}>{sub}</Typography>
+  </Box>
+);
+const KV = ({ k, v, c }) => (
+  <Stack direction="row" justifyContent="space-between" spacing={2} sx={{ py: 1, borderBottom: "1px solid " + LINE, "&:last-child": { borderBottom: 0 } }}>
+    <Typography sx={{ fontSize: 13, color: "text.secondary" }}>{k}</Typography>
+    <Typography sx={{ fontFamily: MONO, fontSize: 13, color: c || "text.primary", textAlign: "right" }}>{v}</Typography>
+  </Stack>
+);
+const StatusChip = ({ status }) => {
+  const m = { clear: [UP, "All clear"], caution: [WARN, "Caution"], stop: [DOWN, "Stop trading"] }[status];
+  return <Chip size="small" label={m[1]} sx={{ color: m[0], border: "1px solid " + m[0] + "55", bgcolor: m[0] + "14", fontWeight: 600 }} />;
+};
+const AlertList = ({ alerts }) => (
+  <Stack spacing={1}>
+    {alerts.map((a, i) => {
+      const c = { bad: DOWN, warn: WARN, good: UP, info: INFO }[a.level];
+      return <Box key={i} sx={{ display: "flex", gap: 1.25, p: 1.25, borderRadius: 1.5, bgcolor: c + "10", border: "1px solid " + c + "33" }}>
+        <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: c, mt: "8px", flexShrink: 0 }} />
+        <Typography sx={{ fontSize: 13.5, lineHeight: 1.5 }}>{a.text}</Typography>
+      </Box>;
+    })}
+  </Stack>
+);
+const numField = { type: "number", inputProps: { step: "any", inputMode: "decimal" } };
+
+function EquityChart({ stats, S, height = 280 }) {
+  const W = 800, H = height, L = 64, R = 16, T = 16, B = 30;
+  const pts = [{ label: tx("Start"), v: S.initial }]; let bal = S.initial;
+  stats.days.forEach((d) => { bal += stats.dm[d].pnl; pts.push({ label: d.slice(5), v: bal }); });
+  const floor = S.initial * (1 - S.mlPct / 100), goal = S.initial * (1 + S.phase / 100);
+  const all = pts.map((p) => p.v).concat([floor, goal, S.initial]);
+  const lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), pd = (hi - lo) * 0.06 || 50, y0 = lo - pd, y1 = hi + pd;
+  const X = (i) => L + (pts.length === 1 ? 0 : (i / (pts.length - 1)) * (W - L - R));
+  const Y = (v) => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+  const line = pts.map((p, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p.v).toFixed(1)).join(" ");
+  const area = line + " L" + X(pts.length - 1).toFixed(1) + " " + Y(y0).toFixed(1) + " L" + X(0).toFixed(1) + " " + Y(y0).toFixed(1) + " Z";
+  const ticks = [0, 1, 2, 3, 4].map((i) => y0 + ((y1 - y0) * i) / 4);
+  const ref = [{ v: goal, c: UP, t: tx("Target") }, { v: S.initial, c: MUTED, t: tx("Start") }, { v: floor, c: DOWN, t: "Max Loss" }];
+  const step = Math.max(1, Math.ceil(pts.length / 8)), last = pts[pts.length - 1];
+  return (
+    <Box sx={{ overflowX: "auto" }}>
+      <svg viewBox={"0 0 " + W + " " + H} role="img" aria-label="Equity curve" style={{ width: "100%", minWidth: 480, display: "block" }}>
+        {ticks.map((v, i) => <g key={i}><line x1={L} x2={W - R} y1={Y(v)} y2={Y(v)} stroke={LINE} /><text x={L - 8} y={Y(v) + 4} textAnchor="end" fontSize="11" fill={MUTED} fontFamily={MONO}>{Math.round(v).toLocaleString("en-US")}</text></g>)}
+        {ref.map((r) => <g key={r.t}><line x1={L} x2={W - R} y1={Y(r.v)} y2={Y(r.v)} stroke={r.c} strokeDasharray="4 4" opacity=".7" /><text x={W - R - 4} y={Y(r.v) - 5} textAnchor="end" fontSize="10" fill={r.c} fontFamily={MONO}>{r.t}</text></g>)}
+        <path d={area} fill={ACCH} opacity=".05" /><path d={line} fill="none" stroke={ACC} strokeWidth="1.75" strokeLinejoin="round" />
+        {pts.map((p, i) => <circle key={i} cx={X(i)} cy={Y(p.v)} r="2.5" fill={ACCFG} stroke={ACC} strokeWidth="1.25" />)}
+        <circle cx={X(pts.length - 1)} cy={Y(last.v)} r="4.5" fill={ACC} />
+        {pts.map((p, i) => (i % step === 0 || i === pts.length - 1) ? <text key={"x" + i} x={X(i)} y={H - 9} textAnchor="middle" fontSize="10.5" fill={MUTED} fontFamily={MONO}>{p.label}</text> : null)}
+      </svg>
+    </Box>
+  );
+}
+function BarList({ rows, fmt }) {
+  const max = Math.max.apply(null, rows.map((r) => Math.abs(r.v)).concat([1]));
+  return (
+    <Stack spacing={1.1}>
+      {rows.map((r) => (
+        <Stack key={r.k} direction="row" alignItems="center" spacing={1.5}>
+          <Typography sx={{ width: 78, fontSize: 12, color: "text.secondary", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.k}</Typography>
+          <Box sx={{ flex: 1, height: 14, position: "relative", minWidth: 0 }}>
+            <Box sx={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: "1px", bgcolor: LINE2 }} />
+            <Box sx={{ position: "absolute", top: 2, bottom: 2, bgcolor: tone(r.v), borderRadius: "2px", left: r.v >= 0 ? "50%" : (50 - (Math.abs(r.v) / max) * 50) + "%", width: (Math.abs(r.v) / max) * 50 + "%" }} />
+          </Box>
+          <Typography sx={{ width: 96, fontFamily: MONO, fontSize: 12, textAlign: "right", color: tone(r.v), flexShrink: 0 }}>{fmt(r)}</Typography>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+function Md({ text }) {
+  const lines = text.split("\n");
+  const inline = (s, k) => s.split(/(\*\*[^*]+\*\*)/g).map((p, i) => /^\*\*[^*]+\*\*$/.test(p) ? <strong key={k + i}>{p.slice(2, -2)}</strong> : <React.Fragment key={k + i}>{p}</React.Fragment>);
+  return (
+    <Box sx={{ fontSize: 14.5, lineHeight: 1.65 }}>
+      {lines.map((ln, i) => {
+        if (!ln.trim()) return <Box key={i} sx={{ height: 8 }} />;
+        const h = ln.match(/^#{1,4}\s+(.*)/); if (h) return <Typography key={i} sx={{ fontWeight: 600, fontSize: 15, mt: 1 }}>{inline(h[1], i)}</Typography>;
+        const b = ln.match(/^\s*[-*•]\s+(.*)/); if (b) return <Box key={i} sx={{ display: "flex", gap: 1, pl: 0.5 }}><span style={{ color: MUTED }}>•</span><span>{inline(b[1], i)}</span></Box>;
+        const n = ln.match(/^\s*(\d+)[.)]\s+(.*)/); if (n) return <Box key={i} sx={{ display: "flex", gap: 1, pl: 0.5 }}><span style={{ color: MUTED, fontFamily: MONO }}>{n[1]}.</span><span>{inline(n[2], i)}</span></Box>;
+        return <Box key={i}>{inline(ln, i)}</Box>;
+      })}
+    </Box>
+  );
+}
+
+/* ============ trade dialog ============ */
+const emptyForm = (date, pre, S) => Object.assign({ id: null, date, time: pad(new Date().getHours()) + ":" + pad(new Date().getMinutes()), dir: 1, lots: "0.10", entry: "", sl: "", exit: "", pnl: "", followed: true, tag: "Setup", note: "" }, pre || {});
+
+function TradeDialog({ ctx, onClose, trades, notes, setTrades, setNotes, S, toast, askConfirm }) {
+  const narrow = useMediaQuery("(max-width:640px)");
+  const date = ctx && ctx.date;
+  const [form, setForm] = useState(emptyForm(date, ctx && ctx.prefill, S));
+  useEffect(() => { if (ctx) setForm(emptyForm(ctx.date, ctx.prefill, S)); }, [ctx]);
+  if (!ctx) return null;
+  const cs = S.contract;
+  const dayTrades = trades.filter((t) => t.date === date).sort((a, b) => a.time.localeCompare(b.time) || a.id - b.id);
+  const dayPnl = dayTrades.reduce((a, t) => a + t.pnl, 0);
+  const patch = (p) => setForm((f) => {
+    const n = Object.assign({}, f, p);
+    const en = parseFloat(n.entry), ex = parseFloat(n.exit), lt = parseFloat(n.lots);
+    if (("entry" in p || "exit" in p || "lots" in p || "dir" in p) && isFinite(en) && isFinite(ex) && isFinite(lt)) n.pnl = String(r2((ex - en) * n.dir * lt * cs));
+    return n;
+  });
+  const en = parseFloat(form.entry), sl = parseFloat(form.sl), lt = parseFloat(form.lots), pnlNum = parseFloat(form.pnl);
+  const risk = isFinite(en) && isFinite(sl) && isFinite(lt) ? Math.abs(en - sl) * lt * cs : 0;
+  const riskPct = risk / S.initial * 100;
+  const valid = isFinite(pnlNum) && /^\d{4}-\d{2}-\d{2}$/.test(form.date) && /^\d{2}:\d{2}$/.test(form.time);
+  const save = () => {
+    if (!valid) return;
+    const rec = { id: form.id || Date.now(), date: form.date, time: form.time, dir: form.dir, lots: parseFloat(form.lots) || 0, entry: form.entry === "" ? null : parseFloat(form.entry), sl: form.sl === "" ? null : parseFloat(form.sl), exit: form.exit === "" ? null : parseFloat(form.exit), pnl: r2(pnlNum), followed: form.followed, tag: form.tag, note: form.note };
+    setTrades((ts) => form.id ? ts.map((t) => (t.id === form.id ? rec : t)) : ts.concat([rec]));
+    toast(form.id ? "Trade updated" : "Trade added");
+    setForm(emptyForm(date, null, S));
+  };
+  const edit = (t) => setForm({ id: t.id, date: t.date, time: t.time, dir: t.dir, lots: String(t.lots), entry: t.entry == null ? "" : String(t.entry), sl: t.sl == null ? "" : String(t.sl), exit: t.exit == null ? "" : String(t.exit), pnl: String(t.pnl), followed: t.followed, tag: t.tag || "Setup", note: t.note || "" });
+  const del = (id) => {
+    const t0 = trades.find((x) => x.id === id);
+    askConfirm({
+      title: "Delete this trade?",
+      body: t0 ? (t0.dir > 0 ? "BUY " : "SELL ") + t0.lots.toFixed(2) + " lots · " + t0.date + " " + t0.time + " · " + usd(t0.pnl, true) : "",
+      note: "This cannot be undone. If cloud sync is on, the deletion syncs to your cloud copy too.", confirmLabel: "Delete",
+      onConfirm: () => { setTrades((ts) => ts.filter((t) => t.id !== id)); toast("Trade deleted"); if (form.id === id) setForm(emptyForm(date, null, S)); },
+    });
+  };
+  const tf = (id, label, key, extra) => <TextField id={id} label={label} size="small" value={form[key]} onChange={(e) => patch({ [key]: e.target.value })} InputLabelProps={{ shrink: true }} {...extra} />;
+  const brandBtn = { bgcolor: ACC, color: ACCFG, "&:hover": { bgcolor: ACCH }, fontWeight: 600 };
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="md" fullScreen={narrow} PaperProps={{ sx: { border: "1px solid " + LINE, bgcolor: PANEL } }}>
+      <DialogTitle sx={{ pb: 1.5 }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={2} sx={{ flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 600 }}>{prettyDate(date)}</span>
+          <Typography component="span" sx={{ fontFamily: MONO, fontSize: 14, color: tone(dayPnl) }}>{dayTrades.length ? usd(dayPnl, true) + " · " + dayTrades.length + " trade" + (dayTrades.length > 1 ? "s" : "") : "No trades yet"}</Typography>
+        </Stack>
+      </DialogTitle>
+      <DialogContent dividers sx={{ borderColor: LINE }}>
+        {dayTrades.length > 0 && (
+          <Box sx={{ overflowX: "auto", mb: 2.5, border: "1px solid " + LINE, borderRadius: 1.5 }}>
+            <Table size="small">
+              <TableHead><TableRow>{["Time", "Side", "Lots", "Entry", "SL", "Exit", "P/L", "R", "Tag", "On plan", ""].map((h) => <TableCell key={h} sx={{ color: "text.secondary", fontSize: 11 }}>{h}</TableCell>)}</TableRow></TableHead>
+              <TableBody>
+                {dayTrades.map((t) => { const r = rOf(t, cs); return (
+                  <TableRow key={t.id} hover selected={form.id === t.id}>
+                    <TableCell sx={{ fontFamily: MONO }}>{t.time}</TableCell>
+                    <TableCell sx={{ fontFamily: MONO, color: t.dir > 0 ? UP : DOWN }}>{t.dir > 0 ? "BUY" : "SELL"}</TableCell>
+                    <TableCell sx={{ fontFamily: MONO }}>{t.lots.toFixed(2)}</TableCell>
+                    <TableCell sx={{ fontFamily: MONO }}>{t.entry == null ? "-" : t.entry.toFixed(2)}</TableCell>
+                    <TableCell sx={{ fontFamily: MONO }}>{t.sl == null ? "-" : t.sl.toFixed(2)}</TableCell>
+                    <TableCell sx={{ fontFamily: MONO }}>{t.exit == null ? "-" : t.exit.toFixed(2)}</TableCell>
+                    <TableCell sx={{ fontFamily: MONO, color: tone(t.pnl) }}>{usd(t.pnl, true)}</TableCell>
+                    <TableCell sx={{ fontFamily: MONO, color: "text.secondary" }}>{r == null ? "-" : r.toFixed(2)}</TableCell>
+                    <TableCell sx={{ color: "text.secondary" }}>{t.tag || "-"}</TableCell>
+                    <TableCell sx={{ color: t.followed ? UP : WARN }}>{t.followed ? "Yes" : "No"}</TableCell>
+                    <TableCell align="right"><Button size="small" onClick={() => edit(t)}>Edit</Button><Button size="small" onClick={() => del(t.id)} sx={{ color: DOWN }}>Delete</Button></TableCell>
+                  </TableRow>); })}
+              </TableBody>
+            </Table>
+          </Box>
+        )}
+        <Label>{form.id ? "Edit trade" : "Add trade"}</Label>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)" }, gap: 1.5, mt: 1.5 }}>
+          {tf("f-date", "Date", "date", { type: "date" })}
+          {tf("f-time", "Time", "time", { type: "time" })}
+          <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 2" } }}>
+            <ToggleButtonGroup exclusive fullWidth size="small" value={form.dir} onChange={(e, v) => v != null && patch({ dir: v })} aria-label="Side" sx={{ height: 40 }}>
+              <ToggleButton value={1} sx={{ "&.Mui-selected": { color: UP, bgcolor: UP + "14" } }}>BUY</ToggleButton>
+              <ToggleButton value={-1} sx={{ "&.Mui-selected": { color: DOWN, bgcolor: DOWN + "14" } }}>SELL</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          {tf("f-lots", "Lots", "lots", numField)}{tf("f-entry", "Entry", "entry", numField)}{tf("f-sl", "Stop loss", "sl", numField)}{tf("f-exit", "Exit", "exit", numField)}
+          <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 2" } }}>{tf("f-pnl", "Profit / loss ($)", "pnl", Object.assign({ fullWidth: true, helperText: "Auto-filled from prices. Edit to include commission." }, numField))}</Box>
+          <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 2" } }}>
+            <TextField id="f-tag" select fullWidth size="small" label="Tag / cause" value={form.tag} onChange={(e) => patch({ tag: e.target.value })} InputLabelProps={{ shrink: true }}>
+              {TAGS.map((t) => <MenuItem key={t} value={t}>{tx(t)}</MenuItem>)}
+            </TextField>
+          </Box>
+          <Box sx={{ gridColumn: "1 / -1" }}><FormControlLabel control={<Switch checked={form.followed} onChange={(e) => patch({ followed: e.target.checked })} />} label="I followed my plan on this trade" /></Box>
+          <Box sx={{ gridColumn: "1 / -1" }}>{tf("f-note", "Notes: why I entered, how I felt, lesson", "note", { fullWidth: true })}</Box>
+        </Box>
+        <Typography sx={{ fontSize: 12.5, color: risk > 0 && riskPct > S.riskPct * 1.5 ? WARN : "text.secondary", mt: 1.25 }}>
+          {risk > 0 ? "Risk on this trade: " + usd(risk) + " (" + riskPct.toFixed(2) + "% of start balance" + (riskPct > S.riskPct * 1.5 ? ", above your plan of " + S.riskPct + "%" : "") + ")" : "Add entry and stop loss to see risk and R multiple."}
+        </Typography>
+        <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+          <Button variant="contained" disabled={!valid} onClick={save} sx={brandBtn}>{form.id ? "Save changes" : "Add trade"}</Button>
+          {form.id && <Button color="inherit" onClick={() => setForm(emptyForm(date, null, S))}>Cancel edit</Button>}
+        </Stack>
+        <Divider sx={{ my: 3, borderColor: LINE }} />
+        <TextField id="f-daynote" label="Daily journal" multiline minRows={2} fullWidth size="small" InputLabelProps={{ shrink: true }} placeholder="How did the day go? Did you follow the rules? What changes tomorrow?"
+          value={notes[date] || ""} onChange={(e) => { const v = e.target.value; setNotes((n) => { const c = Object.assign({}, n); if (v) c[date] = v; else delete c[date]; return c; }); }} />
+      </DialogContent>
+      <DialogActions sx={{ px: 3, py: 1.5 }}><Button onClick={onClose} color="inherit">Close</Button></DialogActions>
+    </Dialog>
+  );
+}
+
+/* ============ pages ============ */
+function Dashboard({ S, stats, info, balance, floating, setFloating, openDay, go, todayStr }) {
+  const goal = S.initial * S.phase / 100;
+  const used = (room, limit) => (limit > 0 ? (1 - room / limit) * 100 : 100);
+  const gcol = (room, limit) => (room <= 0 ? DOWN : used(room, limit) >= 60 ? WARN : UP);
+  const recent = [...stats.sorted].reverse().slice(0, 6);
+  return (
+    <Stack spacing={2.5}>
+      <Panel title="Today's status" action={<StatusChip status={info.status} />}><AlertList alerts={info.alerts} /></Panel>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", lg: "repeat(4, 1fr)" }, gap: 2 }}>
+        <Metric label="Balance" value={usd(balance + floating)} sub={"Started at " + usd(S.initial)} />
+        <Metric label="Net profit" value={usd(stats.total, true)} color={tone(stats.total)} sub={(stats.total / S.initial * 100).toFixed(2) + "% of account"} />
+        <Metric label="Today" value={usd(info.pnl + floating, true)} color={tone(info.pnl + floating)} sub={info.tt.length + " trade" + (info.tt.length === 1 ? "" : "s") + (floating ? " · incl. open P/L" : "")} />
+        <Metric label="Trading days" value={stats.tradingDays + " / " + S.minDays} color={stats.tradingDays >= S.minDays ? UP : undefined} sub={stats.tradingDays >= S.minDays ? "Minimum reached" : (S.minDays - stats.tradingDays) + " more to go"} />
+      </Box>
+      <Panel title="Limits" action={
+        <TextField id="open-pl" size="small" type="number" label="Open P/L now" value={floating} onChange={(e) => setFloating(parseFloat(e.target.value) || 0)} InputLabelProps={{ shrink: true }}
+          inputProps={{ step: "any", inputMode: "decimal", style: { fontFamily: MONO, width: 90 } }} InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />}>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", lg: "repeat(4, 1fr)" }, gap: 3 }}>
+          <Gauge label={"Profit target " + S.phase + "%"} text={usd(Math.max(stats.total, 0)) + " / " + usd(goal)} pct={stats.total / goal * 100} color={stats.total >= goal ? UP : ACC} sub={stats.total >= goal ? "Target reached" : usd(goal - stats.total) + " to go"} />
+          <Gauge label="My daily cap" text={usd(Math.max(info.ownRoom, 0)) + " left"} pct={used(info.ownRoom, info.ownLimit)} color={gcol(info.ownRoom, info.ownLimit)} sub={info.ownRoom <= 0 ? "Cap reached. Stop for today." : "Limit " + usd(info.ownLimit) + " (" + S.ownPct + "%)"} />
+          <Gauge label="FTMO daily loss" text={usd(Math.max(info.dlRoom, 0)) + " left"} pct={used(info.dlRoom, info.dlLimit)} color={gcol(info.dlRoom, info.dlLimit)} sub={"Limit " + usd(info.dlLimit) + " (" + S.dlPct + "%)"} />
+          <Gauge label="FTMO max loss" text={usd(Math.max(info.mlRoom, 0)) + " left"} pct={used(info.mlRoom, info.mlLimit)} color={gcol(info.mlRoom, info.mlLimit)} sub={"Equity floor " + usd(S.initial - info.mlLimit)} />
+        </Box>
+      </Panel>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", xl: "1.5fr 1fr" }, gap: 2 }}>
+        <Panel title="Equity curve" action={<Button size="small" color="inherit" onClick={() => go("analytics")}>Analytics</Button>}><EquityChart stats={stats} S={S} height={250} /></Panel>
+        <Panel title="Recent trades" action={<Button size="small" color="inherit" onClick={() => go("trades")}>All trades</Button>}>
+          {recent.length === 0 ? <Typography sx={{ color: "text.secondary", fontSize: 13.5 }}>No trades yet. Use "Add trade" to log your first one.</Typography> : (
+            <Stack divider={<Divider sx={{ borderColor: LINE }} />}>
+              {recent.map((t) => (
+                <Stack key={t.id} direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 1, cursor: "pointer", "&:hover": { bgcolor: HOVER } }} onClick={() => openDay(t.date)}>
+                  <Box><Typography sx={{ fontSize: 13.5, fontWeight: 500 }}><span style={{ color: t.dir > 0 ? UP : DOWN, fontFamily: MONO }}>{t.dir > 0 ? "BUY" : "SELL"}</span> {t.lots.toFixed(2)} {tx("lots")}</Typography>
+                    <Typography sx={{ fontSize: 12, color: "text.secondary" }}>{t.date.slice(5) + " " + t.time + (t.tag ? " · " + tx(t.tag) : "")}</Typography></Box>
+                  <Typography sx={{ fontFamily: MONO, fontSize: 14, color: tone(t.pnl) }}>{usd(t.pnl, true)}</Typography>
+                </Stack>))}
+            </Stack>)}
+        </Panel>
+      </Box>
+    </Stack>
+  );
+}
+
+function CalendarPage({ stats, S, notes, openDay }) {
+  const today = new Date(), todayStr = ymd(today);
+  const [cursor, setCursor] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  const y = cursor.getFullYear(), m = cursor.getMonth();
+  const lead = wdIndex(new Date(y, m, 1)), dim = new Date(y, m + 1, 0).getDate();
+  const cells = []; for (let i = 0; i < lead; i++) cells.push(null); for (let d = 1; d <= dim; d++) cells.push(d); while (cells.length % 7) cells.push(null);
+  const weeks = []; for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  const ownLimit = S.initial * S.ownPct / 100, prefix = y + "-" + pad(m + 1) + "-";
+  let mPnl = 0, mN = 0, mDays = 0, mW = 0, mG = 0, mR = 0;
+  for (let d = 1; d <= dim; d++) { const o = stats.dm[prefix + pad(d)]; if (o) { mPnl += o.pnl; mN += o.n; mW += o.w; mDays++; if (o.pnl > 0) mG++; else if (o.pnl < 0) mR++; } }
+  const shift = (k) => setCursor(new Date(y, m + k, 1));
+  const sum = (lbl, val, c) => <Box><Label>{lbl}</Label><Typography sx={{ fontFamily: MONO, fontSize: 16, color: c || "text.primary", mt: 0.25 }}>{val}</Typography></Box>;
+  return (
+    <Stack spacing={2.5}>
+      <Panel>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ flexWrap: "wrap", gap: 2 }}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <IconButton aria-label="Previous month" onClick={() => shift(-1)} sx={{ border: "1px solid " + LINE }}><Icon name="left" size={18} /></IconButton>
+            <Typography sx={{ minWidth: 160, textAlign: "center", fontWeight: 600, fontSize: 17 }}>{monthArr()[m] + " " + yearOf(y)}</Typography>
+            <IconButton aria-label="Next month" onClick={() => shift(1)} sx={{ border: "1px solid " + LINE }}><Icon name="right" size={18} /></IconButton>
+            <Button size="small" color="inherit" onClick={() => setCursor(new Date(today.getFullYear(), today.getMonth(), 1))}>Today</Button>
+          </Stack>
+          <Stack direction="row" spacing={3} sx={{ flexWrap: "wrap", rowGap: 1 }}>
+            {sum("Month P/L", usd(mPnl, true), tone(mPnl))}{sum("Trade count", mN)}{sum("Win rate", (mN ? Math.round(mW / mN * 100) : 0) + "%")}
+            {sum("Green / red days", mG + " / " + mR)}
+          </Stack>
+        </Stack>
+      </Panel>
+      <Panel sx={{ p: { xs: 1.25, sm: 2.25 } }}>
+        <Box sx={{ overflowX: "auto" }}>
+          <Box sx={{ minWidth: 640 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr) 1.1fr", gap: "6px", mb: "6px" }}>
+              {dayArr().map((d) => <Typography key={d} sx={{ fontSize: 11, color: "text.secondary", textAlign: "center", letterSpacing: ".08em", textTransform: "uppercase" }}>{d}</Typography>)}
+              <Typography sx={{ fontSize: 11, color: "text.secondary", textAlign: "center", letterSpacing: ".08em", textTransform: "uppercase" }}>Week</Typography>
+            </Box>
+            {weeks.map((wk, wi) => {
+              let wP = 0, wN = 0, wD = 0; wk.forEach((d) => { if (d) { const o = stats.dm[prefix + pad(d)]; if (o) { wP += o.pnl; wN += o.n; wD++; } } });
+              return (
+                <Box key={wi} sx={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr) 1.1fr", gap: "6px", mb: "6px" }}>
+                  {wk.map((d, di) => {
+                    if (!d) return <Box key={di} sx={{ minHeight: 92 }} />;
+                    const ds = prefix + pad(d), o = stats.dm[ds], isToday = ds === todayStr, weekend = di > 4, breach = o && o.pnl <= -ownLimit;
+                    const a = o ? Math.min(0.3, 0.07 + Math.abs(o.pnl) / (ownLimit * 2) * 0.23) : 0;
+                    const bg = o ? (o.pnl > 0 ? "rgba(74,222,128," + a + ")" : o.pnl < 0 ? "rgba(248,113,113," + a + ")" : HOVER) : EMPTY;
+                    return (
+                      <Box key={di} role="button" tabIndex={0} aria-label={prettyDate(ds) + (o ? ", " + usd(o.pnl, true) : ", no trades")} onClick={() => openDay(ds)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDay(ds); } }}
+                        sx={{ minHeight: 92, p: "9px 10px", borderRadius: 1.5, cursor: "pointer", minWidth: 0, bgcolor: bg, border: "1px solid " + (isToday ? ACC : breach ? DOWN : LINE), opacity: weekend && !o ? 0.4 : 1,
+                          display: "flex", flexDirection: "column", justifyContent: "space-between", transition: "border-color .12s", "&:hover": { borderColor: LINE3 }, "&:focus-visible": { outline: "2px solid " + ACC, outlineOffset: 1 } }}>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography sx={{ fontSize: 12, color: isToday ? ACCH : "text.secondary", fontWeight: isToday ? 700 : 400 }}>{d}</Typography>
+                          <Typography sx={{ fontSize: 11, color: DOWN }}>{breach ? "!" : ""}{notes[ds] ? <span style={{ color: MUTED }}> ✎</span> : ""}</Typography>
+                        </Stack>
+                        {o ? <Box><Typography sx={{ fontFamily: MONO, fontSize: { xs: 13, sm: 15 }, fontWeight: 500, color: tone(o.pnl) }}>{compact(o.pnl)}</Typography>
+                          <Typography sx={{ fontSize: 11, color: "text.secondary" }}>{o.n + " trades · " + Math.round(o.w / o.n * 100) + "%"}</Typography></Box>
+                          : <Typography sx={{ fontSize: 11, color: DIM }}>{weekend ? "" : "—"}</Typography>}
+                      </Box>);
+                  })}
+                  <Box sx={{ minHeight: 92, p: "9px 10px", border: "1px solid " + LINE, borderRadius: 1.5, display: "flex", flexDirection: "column", justifyContent: "space-between", minWidth: 0 }}>
+                    <Typography sx={{ fontSize: 11, color: "text.secondary" }}>W{wi + 1}</Typography>
+                    {wN ? <Box><Typography sx={{ fontFamily: MONO, fontSize: { xs: 13, sm: 15 }, fontWeight: 500, color: tone(wP) }}>{compact(wP)}</Typography><Typography sx={{ fontSize: 11, color: "text.secondary" }}>{wN + " trades · " + wD + "d"}</Typography></Box> : <Typography sx={{ fontSize: 11, color: DIM }}>—</Typography>}
+                  </Box>
+                </Box>);
+            })}
+          </Box>
+        </Box>
+        <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 1.5 }}>{"Click a day to view or add trades. A red outline with ! means the day hit your own loss cap (" + usd(ownLimit) + "). ✎ marks a day with a journal note."}</Typography>
+      </Panel>
+    </Stack>
+  );
+}
+
+function TradesPage({ S, stats, openDay }) {
+  const [q, setQ] = useState(""), [month, setMonth] = useState("all"), [side, setSide] = useState("all"), [res, setRes] = useState("all"), [tag, setTag] = useState("all"), [plan, setPlan] = useState("all");
+  const months = useMemo(() => Array.from(new Set(stats.sorted.map((t) => t.date.slice(0, 7)))).sort().reverse(), [stats]);
+  const rows = useMemo(() => stats.sorted.filter((t) =>
+    (month === "all" || t.date.startsWith(month)) && (side === "all" || (side === "buy" ? t.dir > 0 : t.dir < 0)) &&
+    (res === "all" || (res === "win" ? t.pnl > 0 : t.pnl < 0)) && (tag === "all" || (t.tag || "Untagged") === tag) &&
+    (plan === "all" || (plan === "yes" ? t.followed : !t.followed)) && (!q || (t.note || "").toLowerCase().includes(q.toLowerCase()))).reverse(), [stats, q, month, side, res, tag, plan]);
+  const pnl = rows.reduce((a, t) => a + t.pnl, 0), w = rows.filter((t) => t.pnl > 0).length;
+  const sel = (id, label, val, set, opts) => <TextField id={id} select size="small" label={label} value={val} onChange={(e) => set(e.target.value)} InputLabelProps={{ shrink: true }} sx={{ minWidth: 120 }}>{opts.map((o) => <MenuItem key={o[0]} value={o[0]}>{tx(o[1])}</MenuItem>)}</TextField>;
+  return (
+    <Stack spacing={2.5}>
+      <Panel>
+        <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1.5 }}>
+          <TextField id="tr-q" size="small" label="Search notes" value={q} onChange={(e) => setQ(e.target.value)} InputLabelProps={{ shrink: true }} sx={{ minWidth: 180, flex: 1 }} />
+          {sel("tr-m", "Month", month, setMonth, [["all", "All"]].concat(months.map((m) => [m, m])))}
+          {sel("tr-s", "Side", side, setSide, [["all", "All"], ["buy", "Buy"], ["sell", "Sell"]])}
+          {sel("tr-r", "Result", res, setRes, [["all", "All"], ["win", "Wins"], ["loss", "Losses"]])}
+          {sel("tr-t", "Tag", tag, setTag, [["all", "All"]].concat(TAGS.concat(["Untagged"]).map((t) => [t, t])))}
+          {sel("tr-p", "On plan", plan, setPlan, [["all", "All"], ["yes", "Yes"], ["no", "No"]])}
+        </Stack>
+        <Stack direction="row" spacing={3} sx={{ mt: 2, flexWrap: "wrap", rowGap: 0.5 }}>
+          <Typography sx={{ fontSize: 13, color: "text.secondary" }}>{rows.length + " trades"}</Typography>
+          <Typography sx={{ fontSize: 13, fontFamily: MONO, color: tone(pnl) }}>{usd(pnl, true)}</Typography>
+          <Typography sx={{ fontSize: 13, color: "text.secondary" }}>{"Win rate " + (rows.length ? Math.round(w / rows.length * 100) : 0) + "%"}</Typography>
+        </Stack>
+      </Panel>
+      {rows.length === 0 ? <Panel><Typography sx={{ color: "text.secondary" }}>No trades match these filters.</Typography></Panel> : (
+        <Box sx={{ overflowX: "auto", border: "1px solid " + LINE, borderRadius: 2, bgcolor: PANEL }}>
+          <Table size="small">
+            <TableHead><TableRow>{["Date", "Time", "Side", "Lots", "Entry", "SL", "Exit", "P/L", "R", "Tag", "On plan", "Note"].map((h) => <TableCell key={h} sx={{ color: "text.secondary", fontSize: 11 }}>{h}</TableCell>)}</TableRow></TableHead>
+            <TableBody>
+              {rows.map((t) => { const r = rOf(t, S.contract); return (
+                <TableRow key={t.id} hover sx={{ cursor: "pointer" }} onClick={() => openDay(t.date)}>
+                  <TableCell sx={{ fontFamily: MONO }}>{t.date}</TableCell><TableCell sx={{ fontFamily: MONO }}>{t.time}</TableCell>
+                  <TableCell sx={{ fontFamily: MONO, color: t.dir > 0 ? UP : DOWN }}>{t.dir > 0 ? "BUY" : "SELL"}</TableCell>
+                  <TableCell sx={{ fontFamily: MONO }}>{t.lots.toFixed(2)}</TableCell>
+                  <TableCell sx={{ fontFamily: MONO }}>{t.entry == null ? "-" : t.entry.toFixed(2)}</TableCell><TableCell sx={{ fontFamily: MONO }}>{t.sl == null ? "-" : t.sl.toFixed(2)}</TableCell><TableCell sx={{ fontFamily: MONO }}>{t.exit == null ? "-" : t.exit.toFixed(2)}</TableCell>
+                  <TableCell sx={{ fontFamily: MONO, color: tone(t.pnl) }}>{usd(t.pnl, true)}</TableCell><TableCell sx={{ fontFamily: MONO, color: "text.secondary" }}>{r == null ? "-" : r.toFixed(2)}</TableCell>
+                  <TableCell sx={{ color: GOOD_TAGS.includes(t.tag) ? UP : "text.secondary" }}>{t.tag || "-"}</TableCell>
+                  <TableCell sx={{ color: t.followed ? UP : WARN }}>{t.followed ? "Yes" : "No"}</TableCell>
+                  <TableCell sx={{ color: "text.secondary", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>{t.note}</TableCell>
+                </TableRow>); })}
+            </TableBody>
+          </Table>
+        </Box>)}
+    </Stack>
+  );
+}
+
+function AnalyticsPage({ S, stats }) {
+  const hours = Object.keys(stats.byHour).sort().map((h) => ({ k: h + ":00", v: stats.byHour[h].pnl, n: stats.byHour[h].n }));
+  const wd = dayArr().slice(0, 5).map((k, i) => ({ k, v: stats.byWd[i], n: stats.byWdN[i] }));
+  const tags = Object.keys(stats.byTag).map((k) => ({ k, v: stats.byTag[k].pnl, n: stats.byTag[k].n })).sort((a, b) => a.v - b.v);
+  const pf = stats.pf === Infinity ? "∞" : stats.pf.toFixed(2), fol = stats.n ? Math.round(stats.folN / stats.n * 100) : 0;
+  return (
+    <Stack spacing={2.5}>
+      <Panel title="Equity curve (daily)"><EquityChart stats={stats} S={S} /></Panel>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
+        <Panel title="Performance">
+          <KV k="Trade count" v={stats.n} /><KV k="Win rate" v={(stats.winRate * 100).toFixed(1) + "%  (" + stats.wins + "W / " + stats.losses + "L)"} />
+          <KV k="Average win / loss" v={usd(stats.avgWin) + " / " + usd(stats.avgLoss)} /><KV k="Profit factor" v={pf} />
+          <KV k="Expectancy per trade" v={usd(stats.expectancy, true)} c={tone(stats.expectancy)} /><KV k="Average R" v={stats.avgR == null ? "-" : stats.avgR.toFixed(2) + "R"} />
+          <KV k="Max drawdown" v={usd(stats.maxDD)} c={stats.maxDD > 0 ? DOWN : undefined} /><KV k="Longest losing streak" v={stats.maxStreak + " trades"} />
+          <KV k="Best day" v={stats.best ? stats.best.d.slice(5) + "  " + usd(stats.best.pnl, true) : "-"} c={UP} /><KV k="Worst day" v={stats.worst ? stats.worst.d.slice(5) + "  " + usd(stats.worst.pnl, true) : "-"} c={DOWN} />
+        </Panel>
+        <Panel title="Discipline">
+          <KV k="Followed plan" v={fol + "%  (" + stats.folN + "/" + stats.n + ")"} c={fol >= 90 ? UP : fol >= 75 ? WARN : DOWN} />
+          <KV k="Net P/L on plan" v={usd(stats.folPnl, true)} c={tone(stats.folPnl)} /><KV k="Net P/L off plan" v={stats.unfN ? usd(stats.unfPnl, true) : "-"} c={tone(stats.unfPnl)} />
+          <Box sx={{ mt: 2.5 }}><Label sx={{ mb: 1.5 }}>P/L by weekday</Label><BarList rows={wd} fmt={(r) => compact(r.v)} /></Box>
+        </Panel>
+      </Box>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
+        <Panel title="P/L by tag (find your leaks)">{tags.length ? <BarList rows={tags} fmt={(r) => compact(r.v) + " · " + r.n} /> : <Typography sx={{ color: "text.secondary", fontSize: 13 }}>No data yet</Typography>}</Panel>
+        <Panel title="P/L by hour (your logged time)">{hours.length ? <BarList rows={hours} fmt={(r) => compact(r.v) + " · " + r.n} /> : <Typography sx={{ color: "text.secondary", fontSize: 13 }}>No data yet</Typography>}</Panel>
+      </Box>
+    </Stack>
+  );
+}
+
+function CalculatorPage({ S, info, openDay, todayStr }) {
+  const [f, setF] = useState({ entry: "4000.00", sl: "3997.00", risk: String(S.riskPct), rr: "1.5", spread: "0.30" });
+  const [checks, setChecks] = useState(CHECKLIST.map(() => false));
+  const set = (k) => (e) => setF((o) => Object.assign({}, o, { [k]: e.target.value }));
+  const n = (k) => parseFloat(f[k]);
+  const entry = n("entry"), sl = n("sl"), rp = n("risk"), rr = n("rr"), spread = isFinite(n("spread")) ? n("spread") : 0, cs = S.contract;
+  const ok = [entry, sl, rp, rr].every(isFinite) && entry !== sl;
+  const dist = ok ? Math.abs(entry - sl) : 0, eff = dist + Math.max(spread, 0), riskT = S.initial * (rp || 0) / 100;
+  const lots = ok ? Math.floor(riskT / (eff * cs) * 100 + 1e-9) / 100 : 0, real = lots * eff * cs, buy = sl < entry;
+  const tp = buy ? entry + rr * dist : entry - rr * dist, reward = lots * rr * dist * cs;
+  const warns = [];
+  if (ok && lots < 0.01) warns.push({ level: "bad", text: "Lot size is below 0.01 at this risk. The stop is too wide. Tighten it or skip." });
+  if (ok && real > info.ownRoom) warns.push({ level: "bad", text: "A full stop-out would breach your daily cap (" + usd(Math.max(info.ownRoom, 0)) + " left). Reduce size or stop for today." });
+  if (ok && real > info.dlRoom) warns.push({ level: "bad", text: "A full stop-out would breach FTMO daily loss. Do not take this trade." });
+  if (ok && real > info.mlRoom) warns.push({ level: "bad", text: "A full stop-out would breach FTMO max loss. Do not take this trade." });
+  if (ok && rp > 1) warns.push({ level: "warn", text: "Risk above 1% per trade is aggressive for a challenge account." });
+  if (ok && rr < 1) warns.push({ level: "warn", text: "Reward-to-risk below 1 needs a very high win rate." });
+  if (ok && spread > 0 && spread / dist > 0.15) warns.push({ level: "warn", text: "Spread is over 15% of your stop distance. Consider skipping." });
+  if (ok && real > 0 && !warns.some((w) => w.level === "bad")) warns.push({ level: "good", text: "You can lose about " + Math.floor((info.ownRoom) / real) + " full stops before your daily cap." });
+  const ready = checks.every(Boolean) && ok && !warns.some((w) => w.level === "bad") && lots >= 0.01;
+  const kv = (k, v, c) => <KV k={k} v={v} c={c} />;
+  return (
+    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" }, gap: 2.5, alignItems: "start" }}>
+      <Stack spacing={2.5}>
+        <Panel title="Trade setup (XAUUSD)">
+          <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            {[["c-entry", "Entry price", "entry"], ["c-sl", "Stop loss price", "sl"], ["c-risk", "Risk per trade (%)", "risk"], ["c-rr", "Target R : R", "rr"], ["c-spread", "Spread ($ per oz)", "spread"]].map((x) =>
+              <TextField key={x[0]} id={x[0]} label={x[1]} size="small" value={f[x[2]]} onChange={set(x[2])} InputLabelProps={{ shrink: true }} {...numField} inputProps={Object.assign({}, numField.inputProps, { style: { fontFamily: MONO } })} />)}
+          </Box>
+          <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>{[0.25, 0.3, 0.5].map((v) => <Chip key={v} label={v + "%"} size="small" variant="outlined" onClick={() => setF((o) => Object.assign({}, o, { risk: String(v) }))} sx={{ fontFamily: MONO }} />)}</Stack>
+        </Panel>
+        <Panel title="Pre-trade checklist" action={<Button size="small" color="inherit" onClick={() => setChecks(CHECKLIST.map(() => false))}>Reset</Button>}>
+          {CHECKLIST.map((c, i) => <FormControlLabel key={i} sx={{ display: "flex", alignItems: "flex-start", mb: 0.5, mr: 0 }} control={<Checkbox size="small" checked={checks[i]} onChange={(e) => setChecks((a) => a.map((v, j) => (j === i ? e.target.checked : v)))} sx={{ py: 0.5 }} />} label={<Typography sx={{ fontSize: 13.5, pt: 0.5 }}>{c}</Typography>} />)}
+        </Panel>
+      </Stack>
+      <Stack spacing={2.5}>
+        <Panel title="Position size">
+          <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ flexWrap: "wrap" }}>
+            <Typography sx={{ fontFamily: MONO, fontSize: 54, fontWeight: 500, lineHeight: 1, letterSpacing: "-.03em" }}>{lots.toFixed(2)}</Typography>
+            <Typography sx={{ color: "text.secondary" }}>lots</Typography>
+            {ok && <Chip size="small" label={buy ? "BUY" : "SELL"} sx={{ color: buy ? UP : DOWN, fontFamily: MONO, fontWeight: 600, bgcolor: (buy ? UP : DOWN) + "14" }} />}
+          </Stack>
+          <Box sx={{ mt: 2 }}>
+            {kv("Stop distance", ok ? "$" + dist.toFixed(2) + (spread > 0 ? " + " + spread.toFixed(2) + " spread" : "") : "-")}
+            {kv("Real risk (incl. spread)", ok ? usd(real) + " (" + (real / S.initial * 100).toFixed(2) + "%)" : "-")}
+            {kv("Target risk", usd(riskT))}{kv("Take-profit price", ok ? tp.toFixed(2) : "-")}{kv("Profit at take-profit", ok ? usd(reward) : "-", UP)}
+            {kv("Daily cap left", usd(Math.max(info.ownRoom, 0)))}
+          </Box>
+          <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 1 }}>{"Assumes 1 lot = " + cs + " oz. Check your broker's contract size."}</Typography>
+        </Panel>
+        {warns.length > 0 && <Panel title="Checks"><AlertList alerts={warns} /></Panel>}
+        <Button size="large" variant="contained" disabled={!ready} onClick={() => openDay(todayStr, { dir: buy ? 1 : -1, entry: String(entry), sl: String(sl), lots: lots.toFixed(2) })}
+          sx={{ bgcolor: ACC, color: ACCFG, fontWeight: 600, py: 1.4, "&:hover": { bgcolor: ACCH }, "&.Mui-disabled": { bgcolor: TRACK, color: DISABLED } }}>
+          {ready ? "Log this trade in journal" : "Complete the checklist to log"}
+        </Button>
+      </Stack>
+    </Box>
+  );
+}
+
+/* ============ AI coach ============ */
+async function streamChat(messages, onDelta, onThinking, signal) {
+  const headers = { "Content-Type": "application/json" };
+  try { if (sb) { const ses = await sb.auth.getSession(); if (ses.data.session) headers.Authorization = "Bearer " + ses.data.session.access_token; } } catch (e) {}
+  const r = await fetch("/api/chat", { method: "POST", headers, body: JSON.stringify({ messages }), signal });
+  if (r.status === 401) throw new Error("Sign in under Settings → Cloud sync to use the AI coach.");
+  if (!r.ok) { let t = ""; try { t = await r.text(); } catch (e) {} throw new Error("Request failed (" + r.status + "). " + t.slice(0, 160)); }
+  const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+  while (true) {
+    const { done, value } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i; while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line.startsWith("data:")) continue;
+      const d = line.slice(5).trim(); if (d === "[DONE]") return;
+      try { const j = JSON.parse(d); const dl = (j.choices && j.choices[0] && j.choices[0].delta) || {};
+        if (dl.content) onDelta(dl.content); else if (dl.reasoning || dl.reasoning_content) onThinking(); } catch (e) {}
+    }
+  }
+}
+const stripThink = (s) => s.replace(/<think>[\s\S]*?(<\/think>|$)/g, "").trim();
+
+const PROMPTS = [
+  ["Review my week", "Review my last 5 trading days. What am I doing well, and what is my biggest leak?"],
+  ["Why am I losing?", "Using my tags and on-plan data, explain where my money is leaking and what rule would stop it."],
+  ["Can I take another trade?", "Given today's status and limits, should I keep trading today? Be strict."],
+  ["Plan tomorrow", "Write a short pre-market risk plan for tomorrow based on my data: risk per trade, daily cap, stop rules."],
+  ["Am I on track?", "Am I on track to pass this phase? Use my profit, drawdown, trading days and discipline numbers."],
+];
+
+function CoachPage({ S, stats, info, notes, chat, setChat, health, askConfirm }) {
+  const [input, setInput] = useState(""), [busy, setBusy] = useState(false), [thinking, setThinking] = useState(false), [share, setShare] = useState(true), [err, setErr] = useState("");
+  const abortRef = useRef(null), endRef = useRef(null);
+  useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ block: "end" }); }, [chat, thinking]);
+  const send = async (text) => {
+    const msg = (text || input).trim(); if (!msg || busy) return;
+    setInput(""); setErr("");
+    const history = chat.concat([{ role: "user", content: msg }]);
+    setChat(history.concat([{ role: "assistant", content: "" }]));
+    const sys = SYSTEM_PROMPT.replace("Answer in English,", LANG === "th" ? "Answer in Thai (natural, plain Thai; keep trading terms such as R, SL, TP, lots in English)," : "Answer in English,") + (share ? "\n\nTrader journal data (JSON):\n" + buildContext(S, stats, info, notes) : "\n\nThe trader chose not to share journal data.");
+    const payload = [{ role: "system", content: sys }].concat(history.slice(-12).map((m) => ({ role: m.role, content: m.content })));
+    const ac = new AbortController(); abortRef.current = ac; setBusy(true); setThinking(true);
+    let acc = "";
+    try {
+      await streamChat(payload, (d) => { acc += d; setThinking(false); setChat(history.concat([{ role: "assistant", content: acc }])); }, () => setThinking(true), ac.signal);
+      if (!acc) setErr("The model returned an empty answer. Try again or shorten your question.");
+    } catch (e) { if (e.name !== "AbortError") setErr(String(e.message || e)); }
+    setBusy(false); setThinking(false); abortRef.current = null;
+  };
+  const stop = () => { if (abortRef.current) abortRef.current.abort(); };
+  const clear = () => askConfirm({ title: "Clear the AI conversation?", note: "The messages in this chat will be removed from this browser.", confirmLabel: "Clear", onConfirm: () => { stop(); setChat([]); setErr(""); } });
+  return (
+    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "minmax(0,1fr) 300px" }, gap: 2.5, alignItems: "start" }}>
+      <Box sx={{ border: "1px solid " + LINE, borderRadius: 2, bgcolor: PANEL, display: "flex", flexDirection: "column", height: { xs: "calc(100vh - 220px)", lg: "calc(100vh - 150px)" }, minHeight: 420 }}>
+        <Box sx={{ flex: 1, overflowY: "auto", p: { xs: 2, sm: 3 } }}>
+          {chat.length === 0 ? (
+            <Box sx={{ maxWidth: 520, mx: "auto", textAlign: "center", pt: { xs: 3, sm: 8 } }}>
+              <Box sx={{ width: 48, height: 48, borderRadius: 2, bgcolor: ACC, color: ACCFG, display: "grid", placeItems: "center", mx: "auto", mb: 2 }}><Icon name="spark" size={24} /></Box>
+              <Typography sx={{ fontSize: 20, fontWeight: 600, letterSpacing: "-.01em" }}>Risk and discipline coach</Typography>
+              <Typography sx={{ color: "text.secondary", fontSize: 14, mt: 1, lineHeight: 1.6 }}>Ask about your journal, limits and habits. The coach reads your numbers and suggests rules. It does not give trade signals or investment advice.</Typography>
+              <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1, justifyContent: "center", mt: 3 }}>{PROMPTS.map((p) => <Chip key={p[0]} label={p[0]} variant="outlined" onClick={() => send(tx(p[1]))} sx={{ borderColor: LINE2 }} />)}</Stack>
+            </Box>
+          ) : chat.map((m, i) => (
+            <Box key={i} sx={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", mb: 2 }}>
+              <Box sx={{ maxWidth: m.role === "user" ? "85%" : "100%", px: m.role === "user" ? 1.75 : 0, py: m.role === "user" ? 1.1 : 0, borderRadius: 2, bgcolor: m.role === "user" ? TRACK : "transparent", border: m.role === "user" ? "1px solid " + LINE2 : 0 }}>
+                {m.role === "user" ? <Typography sx={{ fontSize: 14.5, whiteSpace: "pre-wrap" }}>{m.content}</Typography>
+                  : (m.content ? <Md text={stripThink(m.content)} /> : <Typography sx={{ color: "text.secondary", fontSize: 14 }}>{thinking ? "Thinking…" : "…"}</Typography>)}
+              </Box>
+            </Box>))}
+          {err && <Box sx={{ p: 1.5, border: "1px solid " + DOWN + "55", bgcolor: DOWN + "10", borderRadius: 1.5, fontSize: 13.5 }}>{tx(err)}</Box>}
+          <div ref={endRef} />
+        </Box>
+        <Box sx={{ borderTop: "1px solid " + LINE, p: 1.5 }}>
+          <Stack direction="row" spacing={1} alignItems="flex-end">
+            <TextField id="coach-input" multiline maxRows={5} fullWidth size="small" placeholder="Ask about your trades, limits or habits…" value={input} onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+            {busy ? <IconButton aria-label="Stop" onClick={stop} sx={{ bgcolor: TRACK2, borderRadius: 1.5, width: 40, height: 40 }}><Icon name="stop" size={16} /></IconButton>
+              : <IconButton aria-label="Send" onClick={() => send()} disabled={!input.trim()} sx={{ bgcolor: ACC, color: ACCFG, borderRadius: 1.5, width: 40, height: 40, "&:hover": { bgcolor: ACCH }, "&.Mui-disabled": { bgcolor: TRACK, color: DISABLED } }}><Icon name="send" size={18} /></IconButton>}
+          </Stack>
+          <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.75 }}>Enter to send, Shift+Enter for a new line. AI can make mistakes. Verify important numbers.</Typography>
+        </Box>
+      </Box>
+      <Stack spacing={2}>
+        <Panel title="Connection">
+          <Stack direction="row" spacing={1} alignItems="center"><Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: health ? (health.configured ? UP : DOWN) : MUTED }} />
+            <Typography sx={{ fontSize: 13.5 }}>{health ? (health.configured ? "Connected" : "API key missing in .env") : "Checking…"}</Typography></Stack>
+          {health && <Typography sx={{ fontFamily: MONO, fontSize: 12, color: "text.secondary", mt: 1, overflowWrap: "anywhere" }}>{health.model}</Typography>}
+        </Panel>
+        <Panel title="Context">
+          <FormControlLabel control={<Switch checked={share} onChange={(e) => setShare(e.target.checked)} />} label={<Typography sx={{ fontSize: 13.5 }}>Share my journal summary</Typography>} />
+          <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 0.5, lineHeight: 1.55 }}>Sends stats, limits and your last 20 trades (with notes) to your model endpoint through the local server. Turn off for general questions.</Typography>
+        </Panel>
+        <Panel title="Quick questions">
+          <Stack spacing={1}>{PROMPTS.map((p) => <Button key={p[0]} size="small" variant="outlined" color="inherit" disabled={busy} onClick={() => send(tx(p[1]))} sx={{ justifyContent: "flex-start", borderColor: LINE2, textAlign: "left" }}>{p[0]}</Button>)}</Stack>
+          <Button size="small" color="inherit" onClick={clear} disabled={!chat.length} sx={{ mt: 1.5, color: "text.secondary" }}>Clear conversation</Button>
+        </Panel>
+      </Stack>
+    </Box>
+  );
+}
+
+/* ============ settings ============ */
+function SettingsPage({ S, setS, state, replaceAll, clearAll, loadSample, health, toast, sync, sample, askConfirm }) {
+  const [email, setEmail] = useState(""), [sending, setSending] = useState(false);
+  const [text, setText] = useState(""), [testing, setTesting] = useState(false), [testMsg, setTestMsg] = useState("");
+  const set = (k) => (e) => { const v = parseFloat(e.target.value); setS((s) => Object.assign({}, s, { [k]: isFinite(v) ? v : 0 })); };
+  const f = (id, label, k, helper) => <TextField id={id} label={label} helperText={helper} size="small" value={S[k]} onChange={set(k)} InputLabelProps={{ shrink: true }} {...numField} />;
+  const exportData = () => {
+    const json = JSON.stringify({ settings: state.settings, trades: state.trades, notes: state.notes }); setText(json);
+    try { navigator.clipboard.writeText(json).then(() => toast("Copied to clipboard"), () => toast("Select the text and copy it manually")); } catch (e) { toast("Select the text and copy it manually"); }
+  };
+  const importData = () => {
+    let d; try { d = JSON.parse(text); if (!d || !Array.isArray(d.trades)) throw new Error("x"); } catch (e) { toast("That JSON is not a valid backup"); return; }
+    askConfirm({ title: "Replace your journal with this backup?", body: d.trades.length + " trades will be imported.", note: "Your current trades and notes will be overwritten. Export a backup first if you are unsure.", confirmLabel: "Replace",
+      onConfirm: () => { replaceAll({ settings: Object.assign({}, defaultSettings, d.settings || {}), trades: d.trades, notes: d.notes || {} }); toast("Imported " + d.trades.length + " trades"); } });
+  };
+  const test = async () => {
+    setTesting(true); setTestMsg("");
+    try { let acc = ""; await streamChat([{ role: "user", content: "Reply with the single word: ok" }], (d) => (acc += d), () => {}, undefined); setTestMsg("Model replied: " + (stripThink(acc) || "(empty)")); }
+    catch (e) { setTestMsg("Failed: " + (e.message || e)); }
+    setTesting(false);
+  };
+  return (
+    <Stack spacing={2.5} sx={{ maxWidth: 900 }}>
+      <Panel title="Account and rules">
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)" }, gap: 2 }}>
+          <TextField id="s-phase" select label="Phase" size="small" value={S.phase} onChange={set("phase")} InputLabelProps={{ shrink: true }}><MenuItem value={10}>Challenge (10%)</MenuItem><MenuItem value={5}>Verification (5%)</MenuItem></TextField>
+          {f("s-initial", "Start balance ($)", "initial")}{f("s-days", "Minimum trading days", "minDays")}
+          {f("s-dl", "FTMO daily loss (%)", "dlPct")}{f("s-ml", "FTMO max loss (%)", "mlPct")}{f("s-cs", "Contract size (oz per lot)", "contract")}
+        </Box>
+        <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 1.5 }}>Verify the FTMO numbers on their site before relying on them. Daily loss here counts closed trades plus the open P/L you enter on the dashboard.</Typography>
+      </Panel>
+      <Panel title="My discipline rules">
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)" }, gap: 2 }}>
+          {f("s-own", "My daily loss cap (%)", "ownPct")}{f("s-risk", "Risk per trade (%)", "riskPct")}{f("s-dt", "Daily profit target (%)", "dailyTargetPct")}
+          {f("s-mt", "Max trades per day", "maxTrades")}{f("s-sl", "Stop after N losses in a row", "stopAfterLosses")}
+        </Box>
+      </Panel>
+      <Panel title="AI model">
+        <KV k="Status" v={health ? (health.configured ? "Configured" : "Missing API key") : "Checking…"} c={health && health.configured ? UP : DOWN} />
+        <KV k="Model" v={health ? health.model : "-"} /><KV k="Endpoint" v={health ? health.base : "-"} />
+        <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 1.5 }}>The API key lives in the local .env file and is used by the local server only. It is never sent to this page.</Typography>
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 1.5, flexWrap: "wrap" }}>
+          <Button variant="outlined" color="inherit" onClick={test} disabled={testing}>{testing ? "Testing…" : "Test connection"}</Button>
+          {testMsg && <Typography sx={{ fontSize: 13, color: testMsg.startsWith("Failed") ? DOWN : UP }}>{testMsg}</Typography>}
+        </Stack>
+      </Panel>
+      <Panel title="Cloud sync" action={sync.available ? <Chip size="small" label={{ signedout: "Signed out", syncing: "Syncing…", synced: "Synced", error: "Sync error", paused: "Sync paused" }[sync.status]} sx={{ color: { synced: UP, error: DOWN, paused: WARN }[sync.status] || MUTED, border: "1px solid " + LINE2 }} /> : null}>
+        {!sync.available ? <Typography sx={{ fontSize: 13.5, color: DOWN }}>Cloud sync is unavailable (library failed to load).</Typography> : !sync.user ? (
+          <Box>
+            <Typography sx={{ fontSize: 13.5, color: "text.secondary", lineHeight: 1.6 }}>Sign in with your email to keep your journal on every device. Your data is private to your account.</Typography>
+            <Stack direction="row" spacing={1.5} sx={{ mt: 2, flexWrap: "wrap", rowGap: 1.5 }}>
+              <TextField id="sync-email" type="email" size="small" label="Email" value={email} onChange={(e) => setEmail(e.target.value)} InputLabelProps={{ shrink: true }} sx={{ minWidth: 240, flex: 1 }} />
+              <Button variant="contained" disabled={!/^\S+@\S+\.\S+$/.test(email) || sending} onClick={async () => { setSending(true); await sync.signIn(email); setSending(false); }} sx={{ bgcolor: ACC, color: ACCFG, fontWeight: 600, "&:hover": { bgcolor: ACCH } }}>Send sign-in link</Button>
+            </Stack>
+          </Box>
+        ) : (
+          <Box>
+            <KV k="Account" v={sync.user.email || "-"} />
+            <Stack direction="row" spacing={1.5} sx={{ mt: 2, flexWrap: "wrap", rowGap: 1 }}>
+              <Button variant="outlined" color="inherit" onClick={sync.refresh}>Sync now</Button>
+              <Button variant="outlined" color="inherit" onClick={async () => { await sync.signOut(); toast("Signed out of cloud sync"); }}>Sign out</Button>
+            </Stack>
+            {sample && <Typography sx={{ fontSize: 12.5, color: WARN, mt: 1.5 }}>Sample data is not uploaded. Clear it or add your first trade to start syncing.</Typography>}
+          </Box>
+        )}
+        {sync.msg && <Typography sx={{ fontSize: 12.5, color: sync.status === "error" ? DOWN : "text.secondary", mt: 1.5, overflowWrap: "anywhere" }}>{sync.msg}</Typography>}
+      </Panel>
+      <Panel title="Data">
+        <Typography sx={{ fontSize: 13.5, color: "text.secondary", lineHeight: 1.6 }}>{"Journal data is stored in this browser only. Export a backup now and then." + (state.sample ? " You are currently looking at sample data, not your trades." : "")}</Typography>
+        <Stack direction="row" sx={{ mt: 1.5, flexWrap: "wrap", gap: 1 }}>
+          <Button variant="outlined" color="inherit" onClick={exportData}>Export (copy JSON)</Button>
+          <Button variant="outlined" color="inherit" onClick={importData} disabled={!text.trim()}>Import from box</Button>
+          <Button variant="outlined" color="inherit" onClick={loadSample}>Load sample data</Button>
+          <Button variant="outlined" onClick={clearAll} sx={{ color: DOWN, borderColor: DANGERLINE }}>Clear all trades</Button>
+        </Stack>
+        <TextField id="s-json" label="Backup JSON" multiline minRows={3} maxRows={8} fullWidth size="small" sx={{ mt: 2 }} InputLabelProps={{ shrink: true }} value={text} onChange={(e) => setText(e.target.value)} inputProps={{ style: { fontFamily: MONO, fontSize: 12 } }} />
+      </Panel>
+    </Stack>
+  );
+}
+
+/* ============ cloud sync (Supabase) ============ */
+const SB_URL = "https://pjhzjlzdvnklzkomzyac.supabase.co";
+const SB_KEY = "sb_publishable_6Qho04kZRu-GOFT705V2ZA_IpzioMaF"; // publishable key: safe in the browser, data is protected by row-level security
+const sb = (typeof supabase !== "undefined") ? supabase.createClient(SB_URL, SB_KEY) : null;
+const META_KEY = "cj-sync-meta";
+const readMeta = () => { try { return JSON.parse(localStorage.getItem(META_KEY) || "null") || {}; } catch (e) { return {}; } };
+const writeMeta = (m) => { try { localStorage.setItem(META_KEY, JSON.stringify(m)); } catch (e) {} };
+
+function useCloudSync(payload, blank, adopt) {
+  const [user, setUser] = useState(null), [status, setStatus] = useState("signedout"), [msg, setMsg] = useState(""), [conflict, setConflict] = useState(null);
+  const rev = useRef(null), ready = useRef(false), timer = useRef(null), latest = useRef(payload), syncedKey = useRef(null), busy = useRef(false);
+  latest.current = payload;
+  const blankRef = useRef(blank), adoptRef = useRef(adopt); blankRef.current = blank; adoptRef.current = adopt;
+  const key = useMemo(() => JSON.stringify(payload), [payload]);
+  const uid = user && user.id;
+
+  useEffect(() => {
+    if (!sb) return;
+    sb.auth.getSession().then((r) => setUser(r.data.session ? r.data.session.user : null));
+    const sub = sb.auth.onAuthStateChange((ev, session) => setUser(session ? session.user : null));
+    return () => sub.data.subscription.unsubscribe();
+  }, []);
+
+  const take = (row) => { adoptRef.current(row.data); rev.current = row.rev; syncedKey.current = null; writeMeta({ uid, rev: row.rev, dirty: false }); ready.current = true; setStatus("synced"); setMsg(""); };
+
+  const push = async () => {
+    if (!sb || !uid || rev.current == null || busy.current) return;
+    busy.current = true; setStatus("syncing");
+    const next = rev.current + 1;
+    const r = await sb.from("journals").update({ data: latest.current, rev: next, updated_at: new Date().toISOString() }).eq("user_id", uid).eq("rev", rev.current).select("rev");
+    busy.current = false;
+    if (r.error) { setStatus("error"); setMsg(r.error.message); return; }
+    if (!r.data || !r.data.length) { const q = await sb.from("journals").select("data,rev").eq("user_id", uid).maybeSingle(); if (q.data) setConflict({ remote: q.data }); setStatus("error"); return; }
+    rev.current = next; syncedKey.current = JSON.stringify(latest.current); writeMeta({ uid, rev: next, dirty: false }); setStatus("synced"); setMsg("");
+  };
+
+  const link = async () => {
+    if (!sb || !uid) return;
+    setStatus("syncing");
+    const q = await sb.from("journals").select("data,rev").eq("user_id", uid).maybeSingle();
+    if (q.error) { setStatus("error"); setMsg(q.error.message); return; }
+    const meta = readMeta(), row = q.data;
+    if (!row) {
+      if (blankRef.current()) { rev.current = 0; ready.current = true; setStatus("paused"); return; }
+      const ins = await sb.from("journals").insert({ user_id: uid, data: latest.current, rev: 1 });
+      if (ins.error) { setStatus("error"); setMsg(ins.error.message); return; }
+      rev.current = 1; ready.current = true; syncedKey.current = JSON.stringify(latest.current); writeMeta({ uid, rev: 1, dirty: false }); setStatus("synced"); return;
+    }
+    if (meta.uid !== uid) { if (blankRef.current()) take(row); else { setConflict({ remote: row }); setStatus("error"); } return; }
+    if (row.rev === meta.rev) { rev.current = row.rev; ready.current = true; setStatus("synced"); if (meta.dirty) push(); return; }
+    if (row.rev > meta.rev) { if (meta.dirty) { setConflict({ remote: row }); setStatus("error"); } else take(row); return; }
+    rev.current = row.rev; ready.current = true; setStatus("synced");
+  };
+
+  useEffect(() => { if (uid) link(); else { rev.current = null; ready.current = false; setStatus("signedout"); setConflict(null); } }, [uid]);
+
+  useEffect(() => {
+    if (!uid || !ready.current || key === syncedKey.current) return;
+    if (blankRef.current() && rev.current === 0) { setStatus("paused"); return; }
+    writeMeta(Object.assign({}, readMeta(), { uid, dirty: true }));
+    clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      if (rev.current === 0) { // first upload after sample/blank state
+        const ins = await sb.from("journals").insert({ user_id: uid, data: latest.current, rev: 1 });
+        if (ins.error) { setStatus("error"); setMsg(ins.error.message); return; }
+        rev.current = 1; syncedKey.current = JSON.stringify(latest.current); writeMeta({ uid, rev: 1, dirty: false }); setStatus("synced"); return;
+      }
+      push();
+    }, 1500);
+    return () => clearTimeout(timer.current);
+  }, [key, uid]);
+
+  const refresh = async () => {
+    if (!sb || !uid) return;
+    if (conflict) return;
+    const meta = readMeta(); if (meta.dirty) { push(); return; }
+    const q = await sb.from("journals").select("data,rev").eq("user_id", uid).maybeSingle();
+    if (q.data && rev.current != null && q.data.rev > rev.current) take(q.data);
+  };
+  useEffect(() => { const h = () => { if (document.visibilityState === "visible") refresh(); }; document.addEventListener("visibilitychange", h); return () => document.removeEventListener("visibilitychange", h); });
+
+  const signIn = async (email) => {
+    if (!sb) return; setMsg("");
+    const r = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+    if (r.error) { setStatus("error"); setMsg(r.error.message); return false; }
+    setMsg("Sign-in link sent to " + email + ". Open it on this device."); return true;
+  };
+  const signOut = async () => { if (sb) await sb.auth.signOut(); writeMeta({}); };
+  const resolve = (choice) => {
+    const c = conflict; setConflict(null); if (!c) return;
+    if (choice === "cloud") take(c.remote);
+    else { rev.current = c.remote.rev; ready.current = true; push(); }
+  };
+  return { available: !!sb, user, status, msg, conflict, signIn, signOut, refresh: link, resolve };
+}
+
+/* ============ app shell ============ */
+const NAV = [
+  ["dashboard", "Dashboard", "dashboard"], ["calendar", "Calendar", "calendar"], ["trades", "Trades", "list"], ["analytics", "Analytics", "chart"],
+  ["calculator", "Risk calculator", "calc"], ["coach", "AI coach", "spark"], ["settings", "Settings", "gear"],
+];
+const TITLES = { dashboard: "Dashboard", calendar: "Calendar", trades: "Trades", analytics: "Analytics", calculator: "Risk calculator", coach: "AI coach", settings: "Settings" };
+
+function SidebarBody({ page, go, collapsed, setCollapsed, balance, S, stats, info, mobile }) {
+  const c = collapsed && !mobile;
+  const goalPct = Math.min(100, Math.max(0, stats.total / (S.initial * S.phase / 100) * 100));
+  return (
+    <Box sx={{ height: "100%", display: "flex", flexDirection: "column", bgcolor: SIDE, borderRight: "1px solid " + LINE, width: mobile ? 264 : c ? 76 : 248, transition: "width .18s", overflow: "hidden" }}>
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ p: c ? "18px 0" : "18px 20px", justifyContent: c ? "center" : "flex-start" }}>
+        <Box sx={{ width: 32, height: 32, borderRadius: 1.5, bgcolor: ACC, color: ACCFG, display: "grid", placeItems: "center", fontWeight: 700, fontFamily: MONO, fontSize: 14, flexShrink: 0 }}>CJ</Box>
+        {!c && <Box><Typography sx={{ fontWeight: 600, fontSize: 15, letterSpacing: "-.01em", lineHeight: 1.2 }}>Challenge Journal</Typography><Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>XAUUSD · 2-Step</Typography></Box>}
+      </Stack>
+      <Box component="nav" aria-label="Main" sx={{ flex: 1, px: c ? 1 : 1.5, py: 1, overflowY: "auto" }}>
+        {NAV.map((n) => {
+          const active = page === n[0];
+          const btn = (
+            <Box component="button" key={n[0]} onClick={() => go(n[0])} aria-current={active ? "page" : undefined}
+              sx={{ all: "unset", boxSizing: "border-box", display: "flex", alignItems: "center", gap: 1.5, width: "100%", p: c ? "11px 0" : "10px 12px", justifyContent: c ? "center" : "flex-start", cursor: "pointer", borderRadius: 1.5, mb: 0.5,
+                color: active ? ACCH : SUBTLE, bgcolor: active ? NAVACT : "transparent", position: "relative", fontSize: 14, fontWeight: active ? 600 : 500, fontFamily: "inherit",
+                "&:hover": { bgcolor: HOVER, color: ACCH }, "&:focus-visible": { outline: "2px solid " + ACC },
+                "&::before": active ? { content: '""', position: "absolute", left: c ? 2 : -6, top: 10, bottom: 10, width: 3, borderRadius: 2, bgcolor: ACCH } : {} }}>
+              <Icon name={n[2]} />{!c && <span>{tx(n[1])}</span>}
+            </Box>);
+          return c ? <Tooltip key={n[0]} title={tx(n[1])} placement="right">{btn}</Tooltip> : btn;
+        })}
+      </Box>
+      {!c ? (
+        <Box sx={{ m: 1.5, p: 1.75, border: "1px solid " + LINE, borderRadius: 2, bgcolor: PANEL }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center"><Label>Account</Label><StatusChip status={info.status} /></Stack>
+          <Typography sx={{ fontFamily: MONO, fontSize: 19, mt: 1, fontWeight: 500 }}>{usd(balance)}</Typography>
+          <LinearProgress variant="determinate" value={goalPct} sx={{ height: 4, borderRadius: 2, bgcolor: TRACK, mt: 1.25, "& .MuiLinearProgress-bar": { bgcolor: goalPct >= 100 ? UP : ACC } }} />
+          <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.75 }}>{goalPct.toFixed(0) + "% of " + S.phase + "% target"}</Typography>
+        </Box>
+      ) : <Box sx={{ display: "grid", placeItems: "center", py: 1.5 }}><Tooltip title={"Status: " + info.status} placement="right"><Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: { clear: UP, caution: WARN, stop: DOWN }[info.status] }} /></Tooltip></Box>}
+      {!mobile && (
+        <Box sx={{ p: 1.5, borderTop: "1px solid " + LINE }}>
+          <Button fullWidth color="inherit" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} sx={{ justifyContent: c ? "center" : "flex-start", color: "text.secondary", gap: 1.5, minWidth: 0 }}>
+            <Icon name={c ? "right" : "left"} size={18} />{!c && "Collapse"}
+          </Button>
+        </Box>)}
+    </Box>
+  );
+}
+
+function App() {
+  const init = useMemo(loadState, []);
+  const [S, setS] = useState(Object.assign({}, defaultSettings, init.settings));
+  const [trades, setTrades] = useState(init.trades);
+  const [notes, setNotes] = useState(init.notes || {});
+  const [floating, setFloating] = useState(init.floating || 0);
+  const [sample, setSample] = useState(!!init.sample);
+  const [chat, setChat] = useState(init.chat || []);
+  const [page, setPage] = useState(() => { const h = (location.hash || "").slice(1); return TITLES[h] ? h : "dashboard"; });
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("cj-collapsed") === "1"; } catch (e) { return false; } });
+  const [drawer, setDrawer] = useState(false);
+  const [dlg, setDlg] = useState(null);
+  const [lang, setLang] = useState(() => { try { return localStorage.getItem("cj-lang") === "th" ? "th" : "en"; } catch (e) { return "en"; } });
+  const [mode, setMode] = useState(() => { try { return localStorage.getItem("cj-mode") === "light" ? "light" : "dark"; } catch (e) { return "dark"; } });
+  LANG = lang; applyPalette(mode);
+  const theme = useMemo(() => makeTheme(mode), [mode]);
+  const [snack, setSnack] = useState("");
+  const [health, setHealth] = useState(null);
+  const desktop = useMediaQuery("(min-width:900px)");
+  const todayStr = ymd(new Date());
+
+  useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify({ settings: S, trades, notes, floating, sample, chat: chat.slice(-40) })); } catch (e) {} }, [S, trades, notes, floating, sample, chat]);
+  useEffect(() => {
+    try { localStorage.setItem("cj-lang", lang); localStorage.setItem("cj-mode", mode); } catch (e) {}
+    const r = document.documentElement; r.lang = lang; r.style.colorScheme = mode; r.style.setProperty("--sb", LINE2); r.style.setProperty("--bg", BG);
+  }, [lang, mode]);
+  useEffect(() => { try { localStorage.setItem("cj-collapsed", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
+  useEffect(() => { fetch("/api/health").then((r) => r.json()).then(setHealth).catch(() => setHealth({ configured: false, model: "-", base: "-" })); }, []);
+  useEffect(() => { const h = () => { const x = (location.hash || "").slice(1); if (TITLES[x]) setPage(x); }; window.addEventListener("hashchange", h); return () => window.removeEventListener("hashchange", h); }, []);
+  useEffect(() => { document.title = tx(TITLES[page]) + " · Challenge Journal"; }, [page]);
+
+  const stats = useMemo(() => computeStats(trades, S), [trades, S]);
+  const info = useMemo(() => todayInfo(stats, S, floating, todayStr), [stats, S, floating, todayStr]);
+  const payload = useMemo(() => ({ settings: S, trades, notes }), [S, trades, notes]);
+  const sync = useCloudSync(payload, () => sample || trades.length === 0, (d) => { setS(Object.assign({}, defaultSettings, d.settings || {})); setTrades(d.trades || []); setNotes(d.notes || {}); setSample(false); });
+  const balance = S.initial + stats.total;
+  const go = (p) => { setPage(p); setDrawer(false); try { history.replaceState(null, "", "#" + p); } catch (e) {} window.scrollTo(0, 0); };
+  const toast = (m) => setSnack(tx(m));
+  const mark = () => setSample(false);
+  const setTradesE = (fn) => { mark(); setTrades(fn); };
+  const setNotesE = (fn) => { mark(); setNotes(fn); };
+  const openDay = (date, prefill) => setDlg({ date: date || todayStr, prefill: prefill || null });
+  const replaceAll = (d) => { setS(d.settings); setTrades(d.trades); setNotes(d.notes); setSample(false); };
+  const [confirmCfg, setConfirmCfg] = useState(null);
+  const askConfirm = (cfg) => setConfirmCfg(cfg);
+  const clearNow = () => { setTrades([]); setNotes({}); setSample(false); toast("All trades cleared"); };
+  const clearAll = () => (sample
+    ? askConfirm({ title: "Clear sample data?", note: "This removes the example trades. Your own data is not affected.", confirmLabel: "Clear", onConfirm: clearNow })
+    : askConfirm({ title: "Clear all trades?", body: trades.length + " trades and all daily notes will be deleted.", note: "This cannot be undone. If cloud sync is on, the deletion syncs to your cloud copy too.", confirmLabel: "Clear", onConfirm: clearNow }));
+  const loadNow = () => { const d = seedData(); setTrades(d.trades); setNotes({}); setSample(true); toast("Sample data loaded"); };
+  const loadSample = () => (!sample && trades.length > 0
+    ? askConfirm({ title: "Replace your trades with sample data?", body: trades.length + " of your trades will be replaced.", note: "Your current trades and notes will be overwritten. Export a backup first if you are unsure.", confirmLabel: "Replace", onConfirm: loadNow })
+    : loadNow());
+
+  const body = { balance, S, stats, info, collapsed, setCollapsed, page, go };
+  const W = desktop ? (collapsed ? 76 : 248) : 0;
+
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      {desktop ? <Box sx={{ position: "fixed", inset: "0 auto 0 0", zIndex: 20 }}><SidebarBody {...body} /></Box>
+        : <Drawer open={drawer} onClose={() => setDrawer(false)} PaperProps={{ sx: { bgcolor: SIDE, backgroundImage: "none" } }}><SidebarBody {...body} mobile /></Drawer>}
+      <Box sx={{ ml: W + "px", transition: "margin .18s", minHeight: "100vh" }}>
+        <Box component="header" sx={{ position: "sticky", top: 0, zIndex: 10, bgcolor: HDR, backdropFilter: "blur(10px)", borderBottom: "1px solid " + LINE,
+          pl: "max(16px, env(safe-area-inset-left, 0px))", pr: "max(16px, env(safe-area-inset-right, 0px))", py: 1.5 }}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ maxWidth: 1180, mx: "auto" }}>
+            <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
+              {!desktop && <IconButton aria-label="Open menu" onClick={() => setDrawer(true)} sx={{ border: "1px solid " + LINE }}><Icon name="menu" /></IconButton>}
+              <Box sx={{ minWidth: 0 }}>
+                <Typography component="h1" sx={{ fontSize: { xs: 18, sm: 21 }, fontWeight: 600, letterSpacing: "-.02em", lineHeight: 1.2 }}>{tx(TITLES[page])}</Typography>
+                <Typography sx={{ fontSize: 12, color: "text.secondary", display: { xs: "none", sm: "block" } }}>{prettyDate(todayStr)}</Typography>
+              </Box>
+            </Stack>
+            <Stack direction="row" spacing={{ xs: 0.75, sm: 1.5 }} alignItems="center">
+              {desktop && <StatusChip status={info.status} />}
+              {sync.available && (
+                <Tooltip title={tx("Cloud sync") + ": " + tx({ signedout: "Signed out", syncing: "Syncing…", synced: "Synced", error: "Sync error", paused: "Sync paused" }[sync.status])}>
+                  <IconButton aria-label="Cloud sync" onClick={() => go("settings")} sx={{ border: "1px solid " + LINE, borderRadius: 1.5, width: 40, height: 40, color: { synced: UP, error: DOWN, paused: WARN }[sync.status] || MUTED }}>
+                    <Icon name="cloud" size={18} />
+                  </IconButton>
+                </Tooltip>)}
+              <Tooltip title={lang === "en" ? "ภาษาไทย" : "English"}>
+                <IconButton aria-label={lang === "en" ? "Switch to Thai" : "Switch to English"} onClick={() => setLang(lang === "en" ? "th" : "en")}
+                  sx={{ border: "1px solid " + LINE, borderRadius: 1.5, height: 40, px: 1.25, gap: 0.6, color: "text.primary" }}>
+                  <Icon name="globe" size={18} /><Box component="span" sx={{ fontSize: 11.5, fontWeight: 700, fontFamily: MONO }}>{lang === "en" ? "EN" : "TH"}</Box>
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={mode === "dark" ? (lang === "th" ? "โหมดสว่าง" : "Light mode") : (lang === "th" ? "โหมดมืด" : "Dark mode")}>
+                <IconButton aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setMode(mode === "dark" ? "light" : "dark")}
+                  sx={{ border: "1px solid " + LINE, borderRadius: 1.5, width: 40, height: 40, color: "text.primary" }}>
+                  <Icon name={mode === "dark" ? "sun" : "moon"} size={18} />
+                </IconButton>
+              </Tooltip>
+              <Button variant="contained" aria-label={tx("Add trade")} onClick={() => openDay(todayStr)}
+                sx={{ bgcolor: ACC, color: ACCFG, fontWeight: 600, height: 40, minWidth: 40, px: { xs: 1, sm: 2 }, "&:hover": { bgcolor: ACCH } }}>
+                <Icon name="plus" size={18} /><Box component="span" sx={{ display: { xs: "none", sm: "inline" }, ml: 1 }}>{tx("Add trade")}</Box>
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
+        <Box sx={{ pl: "max(16px, env(safe-area-inset-left, 0px))", pr: "max(16px, env(safe-area-inset-right, 0px))", py: { xs: 2.5, sm: 3.5 } }}>
+          <Box sx={{ maxWidth: 1180, mx: "auto" }}>
+            {sample && page !== "settings" && (
+              <Box sx={{ border: "1px solid " + LINE, borderLeft: "3px solid " + WARN, p: 1.5, mb: 2.5, borderRadius: 1.5, display: "flex", gap: 2, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", bgcolor: PANEL }}>
+                <Typography sx={{ fontSize: 13.5 }}>You are viewing sample data, not your trades. Clear it before you start logging.</Typography>
+                <Button size="small" onClick={clearAll} sx={{ color: WARN }}>Clear sample data</Button>
+              </Box>)}
+            {page === "dashboard" && <Dashboard S={S} stats={stats} info={info} balance={balance} floating={floating} setFloating={setFloating} openDay={openDay} go={go} todayStr={todayStr} />}
+            {page === "calendar" && <CalendarPage stats={stats} S={S} notes={notes} openDay={openDay} />}
+            {page === "trades" && <TradesPage S={S} stats={stats} openDay={openDay} />}
+            {page === "analytics" && <AnalyticsPage S={S} stats={stats} />}
+            {page === "calculator" && <CalculatorPage S={S} info={info} openDay={openDay} todayStr={todayStr} />}
+            {page === "coach" && <CoachPage S={S} stats={stats} info={info} notes={notes} chat={chat} setChat={setChat} health={health} askConfirm={askConfirm} />}
+            {page === "settings" && <SettingsPage S={S} setS={setS} state={{ settings: S, trades, notes, sample }} replaceAll={replaceAll} clearAll={clearAll} loadSample={loadSample} health={health} toast={toast} sync={sync} sample={sample} askConfirm={askConfirm} />}
+            <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 5, maxWidth: 720 }}>General journaling and risk tool. Not investment advice, and it does not guarantee you will pass.</Typography>
+          </Box>
+        </Box>
+      </Box>
+      <TradeDialog ctx={dlg} onClose={() => setDlg(null)} trades={trades} notes={notes} setTrades={setTradesE} setNotes={setNotesE} S={S} toast={toast} askConfirm={askConfirm} />
+      <Dialog open={!!confirmCfg} onClose={() => setConfirmCfg(null)} fullWidth maxWidth="xs" PaperProps={{ sx: { border: "1px solid " + LINE } }}>
+        <DialogTitle sx={{ fontWeight: 600 }}>{confirmCfg ? tx(confirmCfg.title) : ""}</DialogTitle>
+        <DialogContent>
+          {confirmCfg && confirmCfg.body && <Typography sx={{ fontFamily: MONO, fontSize: 13, mb: 1.5, overflowWrap: "anywhere" }}>{confirmCfg.body}</Typography>}
+          {confirmCfg && confirmCfg.note && <Typography sx={{ fontSize: 14, color: "text.secondary", lineHeight: 1.6 }}>{confirmCfg.note}</Typography>}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button color="inherit" autoFocus onClick={() => setConfirmCfg(null)}>Cancel</Button>
+          <Button variant="contained" onClick={() => { const c = confirmCfg; setConfirmCfg(null); if (c && c.onConfirm) c.onConfirm(); }} sx={{ bgcolor: DOWN, color: "#fff", fontWeight: 600, "&:hover": { bgcolor: DOWN, filter: "brightness(1.1)" } }}>{confirmCfg ? confirmCfg.confirmLabel : ""}</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={!!sync.conflict} fullWidth maxWidth="xs" PaperProps={{ sx: { border: "1px solid " + LINE } }}>
+        <DialogTitle sx={{ fontWeight: 600 }}>{tx("Cloud and this device are different")}</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ fontSize: 14, color: "text.secondary", lineHeight: 1.6 }}>Your cloud journal and this device both have data. Pick which one to keep. The other one is overwritten.</Typography>
+          {sync.conflict && <Typography sx={{ fontFamily: MONO, fontSize: 13, mt: 1.5 }}>{"Cloud has " + ((sync.conflict.remote.data.trades || []).length) + " trades, this device has " + trades.length + "."}</Typography>}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, flexWrap: "wrap", gap: 1 }}>
+          <Button color="inherit" onClick={() => sync.resolve("device")}>Keep this device's data</Button>
+          <Button variant="contained" onClick={() => sync.resolve("cloud")} sx={{ bgcolor: ACC, color: ACCFG, fontWeight: 600, "&:hover": { bgcolor: ACCH } }}>Keep cloud data</Button>
+        </DialogActions>
+      </Dialog>
+      <Snackbar open={!!snack} autoHideDuration={2600} onClose={() => setSnack("")} message={snack} anchorOrigin={{ vertical: "bottom", horizontal: "center" }} />
+    </ThemeProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
